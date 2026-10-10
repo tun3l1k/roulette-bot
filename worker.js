@@ -34,7 +34,9 @@ async function tg(env, method, body) {
 
 export default {
   async fetch(request, env) {
-    if (request.method !== 'POST') return new Response('Бот работает ✅');
+    if (request.method !== 'POST') {
+      return new Response('Бот работает ✅\nТокен: ' + (env.BOT_TOKEN ? 'есть' : 'НЕТ') + '\nСекрет: ' + (env.SECRET ? 'есть' : 'НЕТ'), { headers: { 'content-type': 'text/plain; charset=utf-8' } });
+    }
     if (env.SECRET && request.headers.get('X-Telegram-Bot-Api-Secret-Token') !== env.SECRET) {
       return new Response('forbidden', { status: 403 });
     }
