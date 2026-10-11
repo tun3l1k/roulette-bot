@@ -1,5 +1,12 @@
 {
   "name": "roulette-bot-2",
   "main": "worker.js",
-  "compatibility_date": "2025-01-01"
+  "compatibility_date": "2025-01-01",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "roulette",
+      "database_id": "1b90b99e-6792-46f2-bece-19c29c1078bf"
+    }
+  ]
 }
