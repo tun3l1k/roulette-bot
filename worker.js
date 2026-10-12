@@ -66,18 +66,50 @@ async function verify(initData, token) {
 }
 
 let ready = false;
+async function ensure(env) {
+  if (ready) return;
+  await env.DB.batch([
+    env.DB.prepare('CREATE TABLE IF NOT EXISTS players (id TEXT PRIMARY KEY, sv INTEGER, state TEXT)'),
+    env.DB.prepare('CREATE TABLE IF NOT EXISTS stats (id TEXT PRIMARY KEY, spins INTEGER)'),
+    env.DB.prepare('CREATE TABLE IF NOT EXISTS referrals (invitee TEXT PRIMARY KEY, inviter TEXT, name TEXT, ts INTEGER)'),
+  ]);
+  ready = true;
+}
+
+let botName = '';
+async function getBotName(env) {
+  if (botName) return botName;
+  try {
+    const r = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/getMe`);
+    const j = await r.json();
+    if (j.ok) botName = j.result.username || '';
+  } catch (e) {}
+  return botName;
+}
+
+// Записываем приглашение, только если приглашённый ещё не играл и не был приглашён раньше
+async function registerRef(env, inviter, invitee, name) {
+  if (!env.DB || inviter === invitee) return false;
+  try {
+    await ensure(env);
+    const has = await env.DB.prepare('SELECT 1 AS x FROM players WHERE id = ?').bind(invitee).first();
+    if (has) return false;
+    const r = await env.DB.prepare('INSERT OR IGNORE INTO referrals (invitee, inviter, name, ts) VALUES (?, ?, ?, ?)')
+      .bind(invitee, inviter, String(name || '').slice(0, 40), Date.now()).run();
+    return !!(r && r.meta && r.meta.changes);
+  } catch (e) { return false; }
+}
+
 async function api(request, env, url) {
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
   if (request.method !== 'POST') return json({ ok: false, err: 'method' }, 405);
+  if (url.pathname === '/api/info') return json({ ok: true, bot: await getBotName(env) });
   if (!env.DB) return json({ ok: false, err: 'no_db' }, 503);
   let body;
   try { body = await request.json(); } catch (e) { return json({ ok: false, err: 'json' }, 400); }
   const uid = await verify(String(body.initData || ''), env.BOT_TOKEN);
   if (!uid) return json({ ok: false, err: 'auth' }, 401);
-  if (!ready) {
-    await env.DB.prepare('CREATE TABLE IF NOT EXISTS players (id TEXT PRIMARY KEY, sv INTEGER, state TEXT)').run();
-    ready = true;
-  }
+  await ensure(env);
   if (url.pathname === '/api/load') {
     const row = await env.DB.prepare('SELECT sv, state FROM players WHERE id = ?').bind(uid).first();
     return json({ ok: true, state: row ? JSON.parse(row.state) : null, sv: row ? row.sv : 0 });
@@ -93,7 +125,19 @@ async function api(request, env, url) {
     await env.DB.prepare(
       'INSERT INTO players (id, sv, state) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET sv = excluded.sv, state = excluded.state'
     ).bind(uid, sv, raw).run();
+    await env.DB.prepare('INSERT INTO stats (id, spins) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET spins = excluded.spins')
+      .bind(uid, Math.max(0, Math.floor(Number(st.spins) || 0))).run();
     return json({ ok: true, sv });
+  }
+  if (url.pathname === '/api/refs') {
+    const t = await env.DB.prepare(
+      'SELECT COUNT(*) AS total, COALESCE(SUM(CASE WHEN COALESCE(s.spins,0) >= 10 THEN 1 ELSE 0 END),0) AS act FROM referrals r LEFT JOIN stats s ON s.id = r.invitee WHERE r.inviter = ?'
+    ).bind(uid).first();
+    const l = await env.DB.prepare(
+      'SELECT r.name AS name, COALESCE(s.spins,0) AS spins FROM referrals r LEFT JOIN stats s ON s.id = r.invitee WHERE r.inviter = ? ORDER BY r.ts DESC LIMIT 30'
+    ).bind(uid).all();
+    const me = await env.DB.prepare('SELECT inviter FROM referrals WHERE invitee = ?').bind(uid).first();
+    return json({ ok: true, total: t.total, act: t.act, list: l.results || [], inviter: me ? me.inviter : null });
   }
   return json({ ok: false, err: 'route' }, 404);
 }
@@ -115,7 +159,12 @@ export default {
       const cmd = m.text.trim().split(/\s+/)[0].split('@')[0].toLowerCase();
       const base = { chat_id: m.chat.id, parse_mode: 'HTML', reply_markup: KEYBOARD };
       if (cmd === '/start') {
-        await tg(env, 'sendMessage', { ...base, text: HELLO(esc((m.from && m.from.first_name) || 'друг')) });
+        const arg = m.text.trim().split(/\s+/)[1] || '';
+        let invited = false;
+        if (m.from && /^ref_\d{1,15}$/.test(arg)) {
+          invited = await registerRef(env, arg.slice(4), String(m.from.id), m.from.first_name);
+        }
+        await tg(env, 'sendMessage', { ...base, text: HELLO(esc((m.from && m.from.first_name) || 'друг')) + (invited ? '\n\n🎁 Тебя пригласил друг — приветственный бонус ждёт в игре!' : '') });
       } else if (cmd === '/help') {
         await tg(env, 'sendMessage', { ...base, text: HELP });
       } else {
