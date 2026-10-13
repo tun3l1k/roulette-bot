@@ -1,4 +1,6 @@
-// Бот «Юзерок: Рулетка» + облачное сохранение прогресса (Cloudflare Workers + D1)
+// Бот «Юзерок: Рулетка» + сервер экономики (Cloudflare Workers + D1). Движок игры лежит в engine.js
+import { createEngine } from './engine.js';
+const E = createEngine();
 const GAME_URL = 'https://tun3l1k.github.io/roulette/';
 const KEYBOARD = { inline_keyboard: [[{ text: '🎰 Играть', web_app: { url: GAME_URL } }]] };
 
@@ -73,7 +75,12 @@ async function ensure(env) {
     env.DB.prepare('CREATE TABLE IF NOT EXISTS stats (id TEXT PRIMARY KEY, spins INTEGER)'),
     env.DB.prepare('CREATE TABLE IF NOT EXISTS referrals (invitee TEXT PRIMARY KEY, inviter TEXT, name TEXT, ts INTEGER)'),
     env.DB.prepare('CREATE TABLE IF NOT EXISTS config (k TEXT PRIMARY KEY, v TEXT)'),
+    env.DB.prepare('CREATE TABLE IF NOT EXISTS inbox (id INTEGER PRIMARY KEY AUTOINCREMENT, to_id TEXT, from_name TEXT, kind TEXT, payload TEXT, ts INTEGER)'),
   ]);
+  for (const sql of ['ALTER TABLE players ADD COLUMN ver INTEGER DEFAULT 0', 'ALTER TABLE players ADD COLUMN uname TEXT']) {
+    try { await env.DB.prepare(sql).run(); } catch (e) { /* колонка уже есть */ }
+  }
+  try { await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_uname ON players(uname)').run(); } catch (e) {}
   ready = true;
 }
 
@@ -111,6 +118,56 @@ async function readMaint(env) {
   return { maint: m.maint === '1', msg: m.maint_msg || '' };
 }
 
+// ---------- движок: все расчёты экономики делает сервер ----------
+function mergePrefs(state, prefs) {
+  if (!prefs || typeof prefs !== 'object') return;
+  for (const k of E.PREFK) {
+    if (!(k in prefs)) continue;
+    const v = prefs[k];
+    if (v !== null && v !== undefined && JSON.stringify(v).length < 2000) state[k] = v;
+  }
+}
+const snapKeys = (o) => { const m = {}; for (const k of Object.keys(o)) m[k] = JSON.stringify(o[k]); return m; };
+function diffState(before, after) {
+  const a = snapKeys(after), patch = {}, del = [];
+  for (const k of Object.keys(a)) { if (k !== 'tkAt' && before[k] !== a[k]) patch[k] = after[k]; }
+  for (const k of Object.keys(before)) if (!(k in a)) del.push(k);
+  return { patch, del };
+}
+async function runAct(env, uid, uname, adm, fn, args, prefs, internal) {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const row = await env.DB.prepare('SELECT state, COALESCE(ver,0) AS ver FROM players WHERE id = ?').bind(uid).first();
+    const isNew = !row;
+    const state = row ? JSON.parse(row.state) : E.fresh();
+    mergePrefs(state, prefs);
+    const before = snapKeys(state);
+    const ib = await env.DB.prepare('SELECT id, from_name, kind, payload FROM inbox WHERE to_id = ? ORDER BY id LIMIT 30').bind(uid).all();
+    const items = (ib.results || []).map((r) => ({ id: r.id, from: r.from_name, k: r.kind, p: JSON.parse(r.payload) }));
+    const out = E.run(state, fn, args, { adm, internal, inbox: items });
+    const raw = JSON.stringify(out.S);
+    if (raw.length > 400000) throw new Error('state too large');
+    const sv = Date.now();
+    let ok = false;
+    if (isNew) {
+      try {
+        await env.DB.prepare('INSERT INTO players (id, sv, state, ver, uname) VALUES (?, ?, ?, 1, ?)').bind(uid, sv, raw, uname || null).run();
+        ok = true;
+      } catch (e) { ok = false; }
+    } else {
+      const r = await env.DB.prepare('UPDATE players SET state = ?, sv = ?, ver = COALESCE(ver,0) + 1, uname = ? WHERE id = ? AND COALESCE(ver,0) = ?')
+        .bind(raw, sv, uname || null, uid, row.ver).run();
+      ok = !!(r && r.meta && r.meta.changes);
+    }
+    if (!ok) continue;
+    await env.DB.prepare('INSERT INTO stats (id, spins) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET spins = excluded.spins')
+      .bind(uid, Math.max(0, Math.floor(Number(out.S.spins) || 0))).run();
+    for (const it of items) await env.DB.prepare('DELETE FROM inbox WHERE id = ?').bind(it.id).run();
+    return { out, before };
+  }
+  throw new Error('conflict');
+}
+const userName = (init) => { try { const u = JSON.parse(new URLSearchParams(init).get('user')); return { uname: u.username ? String(u.username).toLowerCase() : null, first: u.first_name || '' }; } catch (e) { return { uname: null, first: '' }; } };
+
 async function api(request, env, url) {
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
   if (request.method !== 'POST') return json({ ok: false, err: 'method' }, 405);
@@ -118,11 +175,11 @@ async function api(request, env, url) {
   let body;
   try { body = await request.json(); } catch (e) { body = {}; }
   if (url.pathname === '/api/status') {
-    if (!env.DB) return json({ ok: true, maint: false, msg: '', admin: false, cfg: false });
+    if (!env.DB) return json({ ok: true, maint: false, msg: '', admin: false, cfg: false, eng: false });
     await ensure(env);
     const m = await readMaint(env);
     const u = body.initData ? await verify(String(body.initData), env.BOT_TOKEN) : null;
-    return json({ ok: true, maint: m.maint, msg: m.msg, admin: isAdmin(env, u), cfg: !!String(env.ADMIN_IDS || '').trim() });
+    return json({ ok: true, maint: m.maint, msg: m.msg, admin: isAdmin(env, u), cfg: !!String(env.ADMIN_IDS || '').trim(), eng: true });
   }
   if (!env.DB) return json({ ok: false, err: 'no_db' }, 503);
   const uid = await verify(String(body.initData || ''), env.BOT_TOKEN);
@@ -138,24 +195,44 @@ async function api(request, env, url) {
     ]);
     return json({ ok: true, maint: on === '1', msg });
   }
-  if (url.pathname === '/api/load') {
-    const row = await env.DB.prepare('SELECT sv, state FROM players WHERE id = ?').bind(uid).first();
-    return json({ ok: true, state: row ? JSON.parse(row.state) : null, sv: row ? row.sv : 0 });
+  const nm = userName(String(body.initData || ''));
+  const adm = isAdmin(env, uid);
+  if (url.pathname === '/api/load' || url.pathname === '/api/prefs' || url.pathname === '/api/save') {
+    // /api/save остался для старых версий игры: принимает только настройки, экономику клиент менять не может
+    const prefs = url.pathname === '/api/save' ? body.state : body.prefs;
+    const r = await runAct(env, uid, nm.uname, adm, '__load', [], prefs);
+    if (url.pathname === '/api/load') return json({ ok: true, eng: true, state: r.out.S, msgs: r.out.msgs });
+    return json({ ok: true });
   }
-  if (url.pathname === '/api/save') {
-    const st = body.state;
-    if (!st || typeof st !== 'object') return json({ ok: false, err: 'state' }, 400);
-    const raw = JSON.stringify(st);
-    if (raw.length > 400000) return json({ ok: false, err: 'size' }, 413);
-    const sv = Number(st.sv) || Date.now();
-    const row = await env.DB.prepare('SELECT sv FROM players WHERE id = ?').bind(uid).first();
-    if (row && row.sv > sv) return json({ ok: false, err: 'newer', sv: row.sv }, 409);
-    await env.DB.prepare(
-      'INSERT INTO players (id, sv, state) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET sv = excluded.sv, state = excluded.state'
-    ).bind(uid, sv, raw).run();
-    await env.DB.prepare('INSERT INTO stats (id, spins) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET spins = excluded.spins')
-      .bind(uid, Math.max(0, Math.floor(Number(st.spins) || 0))).run();
-    return json({ ok: true, sv });
+  if (url.pathname === '/api/act') {
+    const fn = String(body.fn || '');
+    if (!E.allowed(fn) || !Array.isArray(body.args || [])) return json({ ok: false, err: 'fn' }, 400);
+    if (!adm && (await readMaint(env)).maint) return json({ ok: false, err: 'maint' }, 503);
+    const r = await runAct(env, uid, nm.uname, adm, fn, body.args || [], body.prefs);
+    const d = diffState(r.before, r.out.S);
+    return json({ ok: true, patch: d.patch, del: d.del, msgs: r.out.msgs, res: r.out.res });
+  }
+  if (url.pathname === '/api/send') {
+    if (!adm && (await readMaint(env)).maint) return json({ ok: false, err: 'maint' }, 503);
+    const kind = body.kind === 'gift' ? 'gift' : 'nick';
+    const to = String(body.to || '').replace(/^@/, '').toLowerCase();
+    if (!/^[a-z0-9_]{5,32}$/.test(to)) return json({ ok: false, err: 'name' });
+    const rcp = await env.DB.prepare('SELECT id FROM players WHERE uname = ?').bind(to).first();
+    if (!rcp) return json({ ok: false, err: 'no_friend' });
+    if (rcp.id === uid) return json({ ok: false, err: 'self' });
+    const r = await runAct(env, uid, nm.uname, adm, 'giftSend', [kind, String(body.id || ''), to], body.prefs, true);
+    const res = r.out.res;
+    if (!res || res.err) return json({ ok: false, err: (res && res.err) || 'item' });
+    const rec = res.rec;
+    try {
+      await env.DB.prepare('INSERT INTO inbox (to_id, from_name, kind, payload, ts) VALUES (?, ?, ?, ?, ?)')
+        .bind(rcp.id, nm.uname || nm.first || 'друг', kind, JSON.stringify(rec), Date.now()).run();
+    } catch (e) {
+      await runAct(env, uid, nm.uname, adm, 'giftRefund', [kind, rec], null, true);
+      return json({ ok: false, err: 'fail' });
+    }
+    const d = diffState(r.before, r.out.S);
+    return json({ ok: true, patch: d.patch, del: d.del, msgs: r.out.msgs });
   }
   if (url.pathname === '/api/refs') {
     const t = await env.DB.prepare(
@@ -165,7 +242,10 @@ async function api(request, env, url) {
       'SELECT r.name AS name, COALESCE(s.spins,0) AS spins FROM referrals r LEFT JOIN stats s ON s.id = r.invitee WHERE r.inviter = ? ORDER BY r.ts DESC LIMIT 30'
     ).bind(uid).all();
     const me = await env.DB.prepare('SELECT inviter FROM referrals WHERE invitee = ?').bind(uid).first();
-    return json({ ok: true, total: t.total, act: t.act, list: l.results || [], inviter: me ? me.inviter : null });
+    const info = { total: t.total, act: t.act, list: l.results || [], inviter: me ? me.inviter : null };
+    const rr = await runAct(env, uid, nm.uname, adm, 'refsApply', [info], null, true);
+    const d = diffState(rr.before, rr.out.S);
+    return json({ ok: true, ...info, patch: d.patch, del: d.del, msgs: rr.out.msgs });
   }
   return json({ ok: false, err: 'route' }, 404);
 }
