@@ -72,6 +72,7 @@ async function ensure(env) {
     env.DB.prepare('CREATE TABLE IF NOT EXISTS players (id TEXT PRIMARY KEY, sv INTEGER, state TEXT)'),
     env.DB.prepare('CREATE TABLE IF NOT EXISTS stats (id TEXT PRIMARY KEY, spins INTEGER)'),
     env.DB.prepare('CREATE TABLE IF NOT EXISTS referrals (invitee TEXT PRIMARY KEY, inviter TEXT, name TEXT, ts INTEGER)'),
+    env.DB.prepare('CREATE TABLE IF NOT EXISTS config (k TEXT PRIMARY KEY, v TEXT)'),
   ]);
   ready = true;
 }
@@ -100,16 +101,43 @@ async function registerRef(env, inviter, invitee, name) {
   } catch (e) { return false; }
 }
 
+const REF_NEED = 3; // сколько прокруток нужно другу, чтобы считаться активным
+const isAdmin = (env, uid) => !!uid && String(env.ADMIN_IDS || '').split(',').map((x) => x.trim()).includes(String(uid));
+
+async function readMaint(env) {
+  const rows = await env.DB.prepare("SELECT k, v FROM config WHERE k IN ('maint','maint_msg')").all();
+  const m = {};
+  (rows.results || []).forEach((r) => { m[r.k] = r.v; });
+  return { maint: m.maint === '1', msg: m.maint_msg || '' };
+}
+
 async function api(request, env, url) {
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
   if (request.method !== 'POST') return json({ ok: false, err: 'method' }, 405);
   if (url.pathname === '/api/info') return json({ ok: true, bot: await getBotName(env) });
-  if (!env.DB) return json({ ok: false, err: 'no_db' }, 503);
   let body;
-  try { body = await request.json(); } catch (e) { return json({ ok: false, err: 'json' }, 400); }
+  try { body = await request.json(); } catch (e) { body = {}; }
+  if (url.pathname === '/api/status') {
+    if (!env.DB) return json({ ok: true, maint: false, msg: '', admin: false, cfg: false });
+    await ensure(env);
+    const m = await readMaint(env);
+    const u = body.initData ? await verify(String(body.initData), env.BOT_TOKEN) : null;
+    return json({ ok: true, maint: m.maint, msg: m.msg, admin: isAdmin(env, u), cfg: !!String(env.ADMIN_IDS || '').trim() });
+  }
+  if (!env.DB) return json({ ok: false, err: 'no_db' }, 503);
   const uid = await verify(String(body.initData || ''), env.BOT_TOKEN);
   if (!uid) return json({ ok: false, err: 'auth' }, 401);
   await ensure(env);
+  if (url.pathname === '/api/maint') {
+    if (!isAdmin(env, uid)) return json({ ok: false, err: 'forbidden' }, 403);
+    const on = body.on ? '1' : '0';
+    const msg = String(body.msg || '').slice(0, 140);
+    await env.DB.batch([
+      env.DB.prepare('INSERT INTO config (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v').bind('maint', on),
+      env.DB.prepare('INSERT INTO config (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v').bind('maint_msg', msg),
+    ]);
+    return json({ ok: true, maint: on === '1', msg });
+  }
   if (url.pathname === '/api/load') {
     const row = await env.DB.prepare('SELECT sv, state FROM players WHERE id = ?').bind(uid).first();
     return json({ ok: true, state: row ? JSON.parse(row.state) : null, sv: row ? row.sv : 0 });
@@ -131,7 +159,7 @@ async function api(request, env, url) {
   }
   if (url.pathname === '/api/refs') {
     const t = await env.DB.prepare(
-      'SELECT COUNT(*) AS total, COALESCE(SUM(CASE WHEN COALESCE(s.spins,0) >= 10 THEN 1 ELSE 0 END),0) AS act FROM referrals r LEFT JOIN stats s ON s.id = r.invitee WHERE r.inviter = ?'
+      `SELECT COUNT(*) AS total, COALESCE(SUM(CASE WHEN COALESCE(s.spins,0) >= ${REF_NEED} THEN 1 ELSE 0 END),0) AS act FROM referrals r LEFT JOIN stats s ON s.id = r.invitee WHERE r.inviter = ?`
     ).bind(uid).first();
     const l = await env.DB.prepare(
       'SELECT r.name AS name, COALESCE(s.spins,0) AS spins FROM referrals r LEFT JOIN stats s ON s.id = r.invitee WHERE r.inviter = ? ORDER BY r.ts DESC LIMIT 30'
