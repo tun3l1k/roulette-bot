@@ -1,5 +1,6 @@
 // Бот «Юзерок: Рулетка» + сервер экономики (Cloudflare Workers + D1). Движок игры лежит в engine.js
 import { createEngine } from './engine.js';
+import { adminMessage, adminCallback } from './botadmin.js';
 const E = createEngine();
 const GAME_URL = 'https://tun3l1k.github.io/roulette/';
 const KEYBOARD = { inline_keyboard: [[{ text: '🎰 Играть', web_app: { url: GAME_URL } }]] };
@@ -214,7 +215,7 @@ async function api(request, env, url) {
   }
   if (url.pathname === '/api/send') {
     if (!adm && (await readMaint(env)).maint) return json({ ok: false, err: 'maint' }, 503);
-    const kind = body.kind === 'gift' ? 'gift' : 'nick';
+    const kind = 'nick'; // подарки убраны из игры: передаются только ники
     const to = String(body.to || '').replace(/^@/, '').toLowerCase();
     if (!/^[a-z0-9_]{5,32}$/.test(to)) return json({ ok: false, err: 'name' });
     const rcp = await env.DB.prepare('SELECT id FROM players WHERE uname = ?').bind(to).first();
@@ -262,9 +263,19 @@ export default {
     }
     let update;
     try { update = await request.json(); } catch (e) { return new Response('ok'); }
+    const deps = { env, tg, isAdmin, runAct, readMaint, ensure };
+    if (update.callback_query) {
+      try { await adminCallback(deps, update.callback_query); } catch (e) { console.log('admin cb', e && e.message); }
+      return new Response('ok');
+    }
     const m = update.message;
     if (m && m.text) {
       const cmd = m.text.trim().split(/\s+/)[0].split('@')[0].toLowerCase();
+      if (/^\/(admin|stats|player|give|reset|maint)$/.test(cmd)) {
+        let handled = false;
+        try { handled = await adminMessage(deps, m, cmd); } catch (e) { console.log('admin', e && e.message); }
+        if (handled) return new Response('ok');
+      }
       const base = { chat_id: m.chat.id, parse_mode: 'HTML', reply_markup: KEYBOARD };
       if (cmd === '/start') {
         const arg = m.text.trim().split(/\s+/)[1] || '';
