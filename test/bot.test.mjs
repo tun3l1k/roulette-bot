@@ -70,3 +70,45 @@ test('панель, статистика, выдача, карточка, сбр
   await post({ callback_query: { id: 'c', from: { id: 1 }, data: 'a:top', message: { chat: { id: 1 }, message_id: 9 } } });
   assert.match(sent.filter((x) => x.m === 'editMessageText').pop().b.text, /vasya/);
 });
+
+test('настройка игры из бота: /chance /price /cost /pool /cfg', async () => {
+  sent.length = 0;
+  await msg(1, '/chance');
+  assert.match(sent[0].b.text, /Шансы и цены/);
+  await msg(1, '/chance divine 40');
+  assert.match(sent.at(-1).b.text, /Шанс обновлён/);
+  assert.match(sent.at(-1).b.text, /divine<\/code> божественный: вес <b>40<\/b>/);
+  await msg(1, '/chance бож 0');
+  assert.match(sent.at(-1).b.text, /Формат/);
+  await msg(1, '/price rare 100 300');
+  assert.match(sent.at(-1).b.text, /100–300/);
+  await msg(1, '/cost 150');
+  assert.match(sent.at(-1).b.text, /150 ⭐/);
+  await msg(1, '/craftp epic 70');
+  assert.match(sent.at(-1).b.text, /крафт 70%/);
+  await msg(1, '/pool words add testword another_one BAD!');
+  assert.match(sent.at(-1).b.text, /testword/);
+  await msg(1, '/pool words show');
+  assert.match(sent.at(-1).b.text, /testword/);
+  const saved = JSON.parse((await env.DB.prepare("SELECT v FROM config WHERE k='game'").first()).v);
+  assert.equal(saved.cost, 150);
+  assert.deepEqual(saved.add.words, ['testword', 'another_one']);
+
+  // конфиг доходит до игроков: /api/status и цена прокрутки на сервере
+  const st = await worker.fetch(new Request('https://x/api/status', { method: 'POST', body: '{}' }), env);
+  const sj = await st.json();
+  assert.equal(sj.gc.cost, 150);
+
+  // обычный игрок не может менять настройки
+  await msg(99, '/cost 1');
+  assert.match(last().b.text, /Нажми кнопку/);
+
+  // сброс с подтверждением
+  await msg(1, '/cfg reset');
+  const kb = last().b.reply_markup.inline_keyboard[0][0];
+  assert.equal(kb.callback_data, 'c:reset');
+  await post({ callback_query: { id: 'c', from: { id: 1 }, data: 'c:reset', message: { chat: { id: 1 }, message_id: 9 } } });
+  assert.equal(JSON.parse((await env.DB.prepare("SELECT v FROM config WHERE k='game'").first()).v).cost, undefined);
+  await msg(1, '/chance');
+  assert.match(sent.at(-2).b.text, /Прокрутка: <b>100 ⭐/);
+});

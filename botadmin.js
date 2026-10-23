@@ -3,10 +3,105 @@ const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt
 const nf = (n) => Math.round(Number(n) || 0).toLocaleString('ru-RU').replace(/\u00a0/g, ' ');
 const DAY = 86400000;
 
+// ---- настройки игры (шансы, цены, словари): таблица config, ключ game ----
+let CFG = { at: 0, v: {} };
+export async function gameCfg(env, force) {
+  if (!env.DB) return {};
+  if (!force && Date.now() - CFG.at < 20000) return CFG.v;
+  try {
+    const r = await env.DB.prepare("SELECT v FROM config WHERE k = 'game'").first();
+    CFG = { at: Date.now(), v: r ? JSON.parse(r.v) : {} };
+  } catch (e) { CFG = { at: Date.now(), v: {} }; }
+  return CFG.v;
+}
+async function saveCfg(env, cfg) {
+  const raw = JSON.stringify(cfg);
+  if (raw.length > 60000) throw new Error('cfg too large');
+  await env.DB.prepare('INSERT INTO config (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v').bind('game', raw).run();
+  CFG = { at: Date.now(), v: cfg };
+}
+const TRU = { common: 'обыч', norm: 'необыч', rare: 'ред', epic: 'эпи', legend: 'легенд', mythic: 'миф', divine: 'бож' };
+function tierId(s) {
+  s = String(s || '').toLowerCase();
+  if (TRU[s]) return s;
+  return Object.keys(TRU).find((k) => s && (s === k || (s.length >= 3 && TRU[k].startsWith(s.slice(0, 3)) && s.startsWith(TRU[k].slice(0, 3))) )) || null;
+}
+const pct = (x) => (x >= 10 ? x.toFixed(1) : x >= 1 ? x.toFixed(2) : x.toFixed(3)).replace('.', ',');
+function chanceTable(E) {
+  const i = E.cfgInfo();
+  const rows = i.tiers.map((t) => `<code>${t.id.padEnd(6)}</code> ${t.name}: вес <b>${t.w}</b> = <b>${pct(t.pct)}%</b> · цена ${nf(t.rng[0])}–${nf(t.rng[1])} ⭐${t.craft ? ' · крафт ' + Math.round(t.craft * 100) + '%' : ''}`);
+  return `🎲 <b>Шансы и цены</b>\nПрокрутка: <b>${nf(i.cost)} ⭐</b>\n\n${rows.join('\n')}`;
+}
+const CFG_HELP = `\n\n/chance &lt;редкость&gt; &lt;вес&gt; — шанс (вес относительно суммы)
+/price &lt;редкость&gt; &lt;мин&gt; &lt;макс&gt; — базовая цена
+/craftp &lt;редкость&gt; &lt;%&gt; — шанс крафта
+/cost &lt;⭐&gt; — цена прокрутки
+/pool [список] add|del|show &lt;слова&gt; — словари ников
+/cfg reset — вернуть заводские значения
+Редкости: common norm rare epic legend mythic divine`;
+
+async function cfgMessage(d, cmd, args, say) {
+  const { env, E } = d;
+  const cfg = JSON.parse(JSON.stringify(await gameCfg(env, true)));
+  const apply = async () => { E.setConfig(cfg); await saveCfg(env, cfg); };
+  const show = async (head) => { E.setConfig(cfg); await say((head ? head + '\n\n' : '') + chanceTable(E)); };
+  if (cmd === '/chance') {
+    if (!args.length) { await show(); await say(CFG_HELP.trim()); return; }
+    const t = tierId(args[0]), v = parseFloat(String(args[1] || '').replace(',', '.'));
+    if (!t || !(v >= 0.001 && v <= 1000)) { await say('Формат: /chance &lt;редкость&gt; &lt;вес 0,001–1000&gt;'); return; }
+    cfg.w = { ...(cfg.w || {}), [t]: v }; await apply(); await show('✅ Шанс обновлён'); return;
+  }
+  if (cmd === '/price') {
+    const t = tierId(args[0]), lo = Math.round(+args[1]), hi = Math.round(+args[2]);
+    if (!t || !(lo >= 1) || !(hi >= lo) || hi > 1e7) { await say('Формат: /price &lt;редкость&gt; &lt;мин&gt; &lt;макс&gt;'); return; }
+    cfg.rng = { ...(cfg.rng || {}), [t]: [lo, hi] }; await apply(); await show('✅ Цена обновлена'); return;
+  }
+  if (cmd === '/craftp') {
+    const t = tierId(args[0]), v = parseFloat(String(args[1] || '').replace(',', '.'));
+    if (!t || t === 'divine' || !(v >= 0 && v <= 100)) { await say('Формат: /craftp &lt;редкость&gt; &lt;0–100&gt; (божественные не крафтятся)'); return; }
+    cfg.craft = { ...(cfg.craft || {}), [t]: v / 100 }; await apply(); await show('✅ Шанс крафта обновлён'); return;
+  }
+  if (cmd === '/cost') {
+    const v = Math.round(+args[0]);
+    if (!(v >= 1 && v <= 1e5)) { await say('Формат: /cost &lt;1–100000&gt;'); return; }
+    cfg.cost = v; await apply(); await show('✅ Цена прокрутки обновлена'); return;
+  }
+  if (cmd === '/pool') {
+    E.setConfig(cfg);
+    const info = E.cfgInfo().pools;
+    const name = String(args[0] || '').toLowerCase();
+    if (!name) { await say('📚 <b>Словари</b>\n\n' + info.map(([k, n]) => `<code>${k}</code> — ${n}`).join('\n') + '\n\n/pool &lt;имя&gt; add|del|show &lt;слова&gt;'); return; }
+    if (!info.some(([k]) => k === name)) { await say('Нет такого словаря. Доступны: ' + info.map(([k]) => k).join(', ')); return; }
+    const act = String(args[1] || 'show').toLowerCase();
+    const words = args.slice(2).map((x) => x.toLowerCase().replace(/^@/, '')).filter((x) => /^[a-z0-9_]{1,32}$/.test(x)).slice(0, 100);
+    if (act === 'show') { await say(`📚 <b>${name}</b> (${info.find(([k]) => k === name)[1]})\n${E.poolWords(name).slice(-80).map((w) => '<code>' + w + '</code>').join(' ')}`); return; }
+    if ((act !== 'add' && act !== 'del') || !words.length) { await say('Формат: /pool &lt;имя&gt; add|del &lt;слова через пробел&gt; (a–z, 0–9, _)'); return; }
+    const key = act === 'add' ? 'add' : 'del', other = act === 'add' ? 'del' : 'add';
+    cfg[key] = cfg[key] || {}; cfg[other] = cfg[other] || {};
+    cfg[key][name] = [...new Set([...(cfg[key][name] || []), ...words])];
+    cfg[other][name] = (cfg[other][name] || []).filter((w) => !words.includes(w));
+    await apply();
+    await say(`✅ ${act === 'add' ? 'Добавлено' : 'Убрано'}: ${words.map((w) => '<code>' + w + '</code>').join(' ')}\nВ словаре <code>${name}</code> теперь ${E.cfgInfo().pools.find(([k]) => k === name)[1]} слов.`);
+    return;
+  }
+  if (cmd === '/cfg') {
+    if (String(args[0] || '').toLowerCase() === 'reset') {
+      await say('⚠️ <b>Вернуть шансы, цены и словари к заводским?</b>', { inline_keyboard: [[{ text: '↩️ Да, сбросить', callback_data: 'c:reset' }, { text: 'Отмена', callback_data: 'a:menu' }]] });
+      return;
+    }
+    E.setConfig(cfg);
+    const raw = JSON.stringify(cfg);
+    await say(`⚙️ <b>Свои настройки</b>\n<pre>${esc(raw.length > 3000 ? raw.slice(0, 3000) + '…' : raw)}</pre>\n/cfg reset — сбросить`);
+    return;
+  }
+}
+
+
 const PANEL_KB = {
   inline_keyboard: [
     [{ text: '📊 Статистика', callback_data: 'a:stats' }, { text: '🏆 Топ игроков', callback_data: 'a:top' }],
-    [{ text: '🛠 Тех. работы', callback_data: 'a:maint' }, { text: '📖 Команды', callback_data: 'a:help' }],
+    [{ text: '🎲 Шансы', callback_data: 'a:chance' }, { text: '🛠 Тех. работы', callback_data: 'a:maint' }],
+    [{ text: '📖 Команды', callback_data: 'a:help' }],
   ],
 };
 const BACK_KB = { inline_keyboard: [[{ text: '‹ Меню', callback_data: 'a:menu' }]] };
@@ -18,7 +113,9 @@ export const ADMIN_HELP = `🛡 <b>Админ-меню</b>
 /player &lt;id|@ник&gt; — карточка игрока
 /give &lt;id|@ник&gt; star|ton &lt;сумма&gt; — выдать валюту
 /reset &lt;id|@ник&gt; — сбросить прогресс (с подтверждением)
-/maint on|off [текст] — тех. работы`;
+/maint on|off [текст] — тех. работы
+
+⚙️ <b>Настройка игры</b>${CFG_HELP}`;
 
 async function statsText(env, readMaint) {
   const now = Date.now();
@@ -124,6 +221,7 @@ export async function adminMessage(d, m, cmd) {
     });
     return true;
   }
+  if (['/chance', '/price', '/craftp', '/cost', '/pool', '/cfg'].includes(cmd)) { await cfgMessage(d, cmd, args, say); return true; }
   if (cmd === '/maint') {
     const a = String(args[0] || '').toLowerCase();
     if (a !== 'on' && a !== 'off') { const mt = await d.readMaint(env); await say(`🛠 Тех. работы: <b>${mt.maint ? 'включены' : 'выключены'}</b>\n/maint on|off [текст]`); return true; }
@@ -149,6 +247,11 @@ export async function adminCallback(d, cb) {
   else if (data === 'a:stats') await edit(await statsText(env, d.readMaint));
   else if (data === 'a:top') await edit(await topText(env));
   else if (data === 'a:help') await edit(ADMIN_HELP);
+  else if (data === 'a:chance') { d.E.setConfig(await gameCfg(env, true)); await edit(chanceTable(d.E)); }
+  else if (data === 'c:reset') {
+    await saveCfg(env, {}); d.E.setConfig({});
+    await ans('Сброшено'); await edit('↩️ Настройки игры вернулись к заводским\n\n' + chanceTable(d.E)); return;
+  }
   else if (data === 'a:maint') {
     const mt = await d.readMaint(env);
     await edit(`🛠 Тех. работы: <b>${mt.maint ? 'включены' : 'выключены'}</b>`, {

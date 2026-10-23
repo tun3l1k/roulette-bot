@@ -164,3 +164,27 @@ test('крафт: некорректные запросы отклоняются
   assert.equal(run(S, 'craftRoll', [['d4', 'e5', 'f6']]).res.err, 'max');
   assert.equal(JSON.stringify(S.coll.slice(0, 4)), before);
 });
+
+test('настройки: шансы, цена прокрутки, словари применяются и сбрасываются', () => {
+  const base = E.cfgInfo();
+  assert.equal(base.cost, 100);
+  E.setConfig({ w: { divine: 50 }, rng: { rare: [100, 200] }, cost: 250, craft: { rare: 0.9 }, add: { words: ['zzqux'] }, del: { words: ['fox'] } });
+  const i = E.cfgInfo();
+  assert.equal(i.cost, 250);
+  assert.ok(i.tiers.find((t) => t.id === 'divine').pct > 20, 'божественные теперь частые');
+  assert.deepEqual(i.tiers.find((t) => t.id === 'rare').rng, [100, 200]);
+  assert.equal(i.tiers.find((t) => t.id === 'rare').craft, 0.9);
+  const w = E.poolWords('words');
+  assert.ok(w.includes('zzqux') && !w.includes('fox'));
+  const S = E.fresh(); S.yuz = 1e6;
+  const before = S.yuz; run(S, 'spinRoll'); assert.equal(before - S.yuz, 250, 'списывается новая цена');
+  // мусор отбрасывается
+  E.setConfig({ w: { rare: -5, epic: 'x' }, cost: 0, add: { words: ['Bad Word', '', 'ok_1'] } });
+  assert.ok(E.poolWords('words').includes('ok_1') && !E.poolWords('words').includes('Bad Word'));
+  assert.equal(E.cfgInfo().cost, 100);
+  E.setConfig({});
+  const back = E.cfgInfo();
+  assert.deepEqual(back.tiers.map((t) => t.w), base.tiers.map((t) => t.w));
+  assert.equal(E.poolWords('words').includes('fox'), true);
+  assert.equal(E.poolWords('words').includes('zzqux'), false);
+});
