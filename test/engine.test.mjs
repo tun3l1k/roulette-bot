@@ -133,3 +133,34 @@ test('маркет и таймеры: сутки симуляции без ош�
   }
   assert.ok(Array.isArray(S.lots));
 });
+
+test('крафт: успех повышает редкость, провал даёт ту же, ники сгорают', () => {
+  const tiers = ['common', 'norm', 'rare', 'epic', 'legend', 'mythic', 'divine'];
+  let wins = 0, loses = 0;
+  for (let n = 0; n < 400; n++) {
+    const S = E.fresh();
+    const t = tiers[n % 6];
+    S.coll = ['aaa1', 'bbb2', 'ccc3', 'keep'].map((u, i) => ({ u, tier: i < 3 ? t : 'rare', base: 5, ts: 1 }));
+    const r = run(S, 'craftRoll', [['aaa1', 'bbb2', 'ccc3']]).res;
+    assert.ok(r.ok, JSON.stringify(r));
+    assert.equal(S.coll.length, 2, 'три сгорели, один новый');
+    assert.ok(!S.coll.some((x) => ['aaa1', 'bbb2', 'ccc3'].includes(x.u)));
+    const want = r.win ? tiers[tiers.indexOf(t) + 1] : t;
+    assert.equal(r.r.tier, want);
+    r.win ? wins++ : loses++;
+  }
+  assert.ok(wins > 50 && loses > 50, 'и успехи, и провалы случаются: ' + wins + '/' + loses);
+});
+
+test('крафт: некорректные запросы отклоняются без потерь', () => {
+  const S = E.fresh();
+  S.coll = [{ u: 'a1', tier: 'common', base: 1 }, { u: 'b2', tier: 'common', base: 1 }, { u: 'c3', tier: 'rare', base: 30 }, { u: 'd4', tier: 'divine', base: 9000 }];
+  const before = JSON.stringify(S.coll);
+  assert.equal(run(S, 'craftRoll', [['a1', 'b2']]).res.err, 'arg');
+  assert.equal(run(S, 'craftRoll', [['a1', 'a1', 'b2']]).res.err, 'arg');
+  assert.equal(run(S, 'craftRoll', [['a1', 'b2', 'zz']]).res.err, 'item');
+  assert.equal(run(S, 'craftRoll', [['a1', 'b2', 'c3']]).res.err, 'tier');
+  S.coll.push({ u: 'e5', tier: 'divine', base: 9000 }, { u: 'f6', tier: 'divine', base: 9000 });
+  assert.equal(run(S, 'craftRoll', [['d4', 'e5', 'f6']]).res.err, 'max');
+  assert.equal(JSON.stringify(S.coll.slice(0, 4)), before);
+});
