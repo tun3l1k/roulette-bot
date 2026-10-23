@@ -7,7 +7,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // Модули игры, которые выполняет сервер (порядок важен)
-export const MODULES = ['config', 'util', 'rarity', 'actions', 'economy', 'ledger', 'tasks', 'autosell', 'wheel', 'shop', 'admin', 'refs', 'market', 'generator', 'craft'];
+export const MODULES = ['config', 'util', 'nicks', 'rarity', 'actions', 'economy', 'ledger', 'tasks', 'autosell', 'wheel', 'shop', 'admin', 'refs', 'market', 'generator', 'craft'];
 
 export function buildEngine(clientDir, toolsDir) {
   const read = (p) => readFileSync(p, 'utf8');

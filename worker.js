@@ -1,6 +1,6 @@
 // Бот «Юзерок: Рулетка» + сервер экономики (Cloudflare Workers + D1). Движок игры лежит в engine.js
 import { createEngine } from './engine.js';
-import { adminMessage, adminCallback } from './botadmin.js';
+import { adminMessage, adminCallback, gameCfg } from './botadmin.js';
 const E = createEngine();
 const GAME_URL = 'https://tun3l1k.github.io/roulette/';
 const KEYBOARD = { inline_keyboard: [[{ text: '🎰 Играть', web_app: { url: GAME_URL } }]] };
@@ -144,6 +144,7 @@ async function runAct(env, uid, uname, adm, fn, args, prefs, internal) {
     const before = snapKeys(state);
     const ib = await env.DB.prepare('SELECT id, from_name, kind, payload FROM inbox WHERE to_id = ? ORDER BY id LIMIT 30').bind(uid).all();
     const items = (ib.results || []).map((r) => ({ id: r.id, from: r.from_name, k: r.kind, p: JSON.parse(r.payload) }));
+    E.setConfig(await gameCfg(env));
     const out = E.run(state, fn, args, { adm, internal, inbox: items });
     const raw = JSON.stringify(out.S);
     if (raw.length > 400000) throw new Error('state too large');
@@ -180,7 +181,7 @@ async function api(request, env, url) {
     await ensure(env);
     const m = await readMaint(env);
     const u = body.initData ? await verify(String(body.initData), env.BOT_TOKEN) : null;
-    return json({ ok: true, maint: m.maint, msg: m.msg, admin: isAdmin(env, u), cfg: !!String(env.ADMIN_IDS || '').trim(), eng: true });
+    return json({ ok: true, maint: m.maint, msg: m.msg, admin: isAdmin(env, u), cfg: !!String(env.ADMIN_IDS || '').trim(), eng: true, gc: await gameCfg(env) });
   }
   if (!env.DB) return json({ ok: false, err: 'no_db' }, 503);
   const uid = await verify(String(body.initData || ''), env.BOT_TOKEN);
@@ -263,7 +264,7 @@ export default {
     }
     let update;
     try { update = await request.json(); } catch (e) { return new Response('ok'); }
-    const deps = { env, tg, isAdmin, runAct, readMaint, ensure };
+    const deps = { env, tg, isAdmin, runAct, readMaint, ensure, E };
     if (update.callback_query) {
       try { await adminCallback(deps, update.callback_query); } catch (e) { console.log('admin cb', e && e.message); }
       return new Response('ok');
@@ -271,7 +272,7 @@ export default {
     const m = update.message;
     if (m && m.text) {
       const cmd = m.text.trim().split(/\s+/)[0].split('@')[0].toLowerCase();
-      if (/^\/(admin|stats|player|give|reset|maint)$/.test(cmd)) {
+      if (/^\/(admin|stats|player|give|reset|maint|chance|price|craftp|cost|pool|cfg)$/.test(cmd)) {
         let handled = false;
         try { handled = await adminMessage(deps, m, cmd); } catch (e) { console.log('admin', e && e.message); }
         if (handled) return new Response('ok');

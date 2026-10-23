@@ -9,29 +9,21 @@ var APP_VER='2.0.0';
 var NEWS_URL='https://t.me/UsernameRouletteNews',SUPPORT_URL='https://t.me/TUN3L';
 var PAY_LIVE=false; // true, когда подключена настоящая оплата Telegram Stars
 var TIERS=[
- {id:'common',name:'обычный',icon:'⚪',color:'#9e9e9e',bd:['#8794a8','#3b4658'],w:55,pts:1},
- {id:'norm',name:'необычный',icon:'🟢',color:'#34c759',bd:['#46c27d','#17673f'],w:25,pts:3},
- {id:'rare',name:'редкий',icon:'🔵',color:'#3b82f6',bd:['#5a9bff','#1d3f99'],w:12,pts:10},
- {id:'epic',name:'эпический',icon:'🟣',color:'#a855f7',bd:['#b57bff','#4f2196'],w:5,pts:30},
- {id:'legend',name:'легендарный',icon:'🟠',color:'#ff9500',bd:['#ffb04a','#b24a0c'],w:2,pts:100},
- {id:'mythic',name:'мифический',icon:'🔴',color:'#ff3b30',bd:['#ff6a5c','#8f1515'],w:0.8,pts:500},
- {id:'divine',name:'божественный',icon:'🌟',color:'#ffd700',bd:['#ffd75a','#b8560a'],w:0.2,pts:2000}
+ {id:'common',name:'обычный',icon:'⚪',color:'#9e9e9e',bd:['#8794a8','#3b4658'],w:52,pts:10},
+ {id:'norm',name:'необычный',icon:'🟢',color:'#34c759',bd:['#46c27d','#17673f'],w:25,pts:33},
+ {id:'rare',name:'редкий',icon:'🔵',color:'#3b82f6',bd:['#5a9bff','#1d3f99'],w:12.5,pts:59},
+ {id:'epic',name:'эпический',icon:'🟣',color:'#a855f7',bd:['#b57bff','#4f2196'],w:6.5,pts:74},
+ {id:'legend',name:'легендарный',icon:'🟠',color:'#ff9500',bd:['#ffb04a','#b24a0c'],w:3,pts:154},
+ {id:'mythic',name:'мифический',icon:'🔴',color:'#ff3b30',bd:['#ff6a5c','#8f1515'],w:0.8,pts:595},
+ {id:'divine',name:'божественный',icon:'🌟',color:'#ffd700',bd:['#ffd75a','#b8560a'],w:0.2,pts:1555}
 ];
-var NAMES=['alexander','dmitry','sergey','andrew','michael','nikolay','vladimir','natalia','svetlana','victoria','daniel','kirill','eugene','maxim','artem','olivia','sophia','natasha'];
-var SURN=['ivanov','petrov','smirnov','volkov','kuznetsov','popov','sokolov','morozov'];
-var SHORTN=['max','alex','anna','ivan','oleg','lena','dima','mike','sam','nick','kate','john','olga'];
-var WORDS=['fox','wolf','king','neo','sun','moon','lion','star','fire','ice','cat','god','zen','sky','wave','gold','ace','boss'];
-// Короткие слова в стиле каталога Fragment (легендарные)
-var FRAG_L=['cash','gold','bank','love','game','king','queen','money','trade','wallet','poker','vip','luck','rich','boss','lion','tiger','wolf','storm','fire','magic','pixel','robot','ninja','pirate','rocket','diamond','silver','lucky','royal'];
-// Совсем короткие (мифические)
-var FRAG_M=['ton','nft','vip','btc','eth','usd','ai','tg','id','ok','go','me','x','z','q','win','pay','art'];
-var DIVINE=['dubai','moscow','london','paris','bitcoin','crypto','tokyo','nft','casino','elon','miami','vegas','berlin','rome','madrid','istanbul','bali','telegram','wallet','invest','binance','ethereum','bank','money','crypto','gold','trade','bet','poker','jackpot','premium','official','support','admin','news'];
 var BOTS=[['crypto_king',4200],['neo_wolf',1800],['dubai_boss',900],['lena_star',350],['max_ivanov_99',60]];
 var RATE=50000;
-var RNG={common:[1,5],norm:[5,20],rare:[20,80],epic:[80,300],legend:[300,1000],mythic:[1000,5000],divine:[5000,20000]};
+var RNG={common:[5,18],norm:[15,58],rare:[27,104],epic:[33,131],legend:[70,270],mythic:[270,1050],divine:[700,2750]};
 var TASKS=[{id:'spin10',title:'Сделай 10 прокруток',goal:10,rew:50,ic:'repeat'},{id:'keep3',title:'Оставь 3 ника в коллекции',goal:3,rew:40,ic:'plus'},{id:'sell5',title:'Продай 5 ников',goal:5,rew:40,ic:'tag'},{id:'rare1',title:'Выбей редкий ник',goal:1,rew:150,ic:'star'},{id:'bid1',title:'Сделай ставку на аукционе',goal:1,rew:30,ic:'hammer'},{id:'list1',title:'Выставь ник на маркет',goal:1,rew:30,ic:'list'},{id:'wheel',title:'Крутани колесо фортуны',goal:1,rew:60,ic:'wheel'}];
 var WTASKS=[{id:'w_spin',ev:'spin10',title:'Сделай 100 прокруток',goal:100,rew:600,ic:'repeat'},{id:'w_rare',ev:'rare1',title:'Выбей 5 редких ников',goal:5,rew:1000,ic:'star'},{id:'w_sell',ev:'sell5',title:'Продай 30 ников',goal:30,rew:700,ic:'tag'},{id:'w_bid',ev:'bid1',title:'Сделай 5 ставок',goal:5,rew:500,ic:'hammer'},{id:'w_wheel',ev:'wheel',title:'Крутани колесо 3 раза',goal:3,rew:500,ic:'wheel'}];
 var COST=100;
+var LUCK_F=1.5,LUCK_COST=300; // удача: множитель шанса редких и цена за 10 прокруток (подобрано так, чтобы не окупаться)
 var WHEEL_MS=5*3600*1000;
 var WHEEL=[
  {id:'s50',c:'#5ac8fa',w:28,t:'star',v:50},
@@ -65,18 +57,64 @@ function dt(ts){var d=new Date(ts);return ('0'+d.getDate()).slice(-2)+'.'+('0'+(
 function dk(d){return d.getFullYear()+'-'+(d.getMonth()+1)+'-'+d.getDate()}
 function tleft(ms){var t=Math.max(0,Math.ceil(ms/1000));return Math.floor(t/60)+':'+('0'+t%60).slice(-2)}
 
+// Словари ников. Чем короче и «дороже» слово, тем выше редкость, в которой оно выпадает.
+var NW=function(s){return s.split(' ')};
+// длинные имена (редкие)
+var NAMES=NW('alexander dmitry sergey andrew michael nikolay vladimir natalia svetlana victoria daniel kirill eugene maxim artem olivia sophia natasha anastasia ekaterina elizabeth katherine christina alexandra benjamin jonathan nicholas matthew william jennifer jessica michelle stephanie samantha isabella charlotte penelope valentina carolina gabriela adriana federico francesco giovanni leonardo massimo roberto stefano antonio fernando santiago sebastian mauricio patricio ricardo eduardo emanuel konstantin aleksandr aleksey anatoly arkady bogdan boris denis egor evgeny gennady gleb igor ilya leonid lev matvey mikhail miroslav nikita pavel rodion roman ruslan semyon stepan taras timur valery vasily vitaly vlad vyacheslav yaroslav yuri zakhar alina daria diana elena galina irina julia karina larisa liliya lyudmila margarita marina milana nadezhda oksana polina regina rimma sofia tamara tatiana ulyana veronika viktoria vera yana zoya');
+// короткие имена (эпические)
+var SHORTN=NW('max alex anna ivan oleg lena dima mike sam nick kate john olga ben tom tim jim joe leo ian dan ann eva eve ada ava amy zoe mia lia kim liz meg sue pat ray roy rob bob bill dave mark paul peter steve kevin brian chris david james jack luke adam noah liam owen ryan evan sean seth neil carl hugo igor egor gleb lev ilya kira vera yana dasha masha sasha misha pasha kolya vanya petya nina nika mila lara lina lisa rita rose ruby emma ella elsa iris ivy jade june lily lola luna maya nora rina sara tina vika alla zina');
+var SURN=NW('ivanov petrov smirnov volkov kuznetsov popov sokolov morozov lebedev kozlov novikov fedorov mikhailov belov orlov egorov zaitsev pavlov semenov golubev vinogradov bogdanov vorobyov filippov komarov davydov belyaev gerasimov bogomolov osipov sidorov grigoriev romanov zhukov medvedev nikitin sobolev kiselyov ilyin gusev titov kuzmin kudryavtsev baranov kulikov alekseev stepanov yakovlev sorokin sergeev romanenko tarasov smith johnson brown miller davis wilson moore taylor clark lewis walker hall young king wright green baker');
+var ADJ=NW('happy lucky sunny wild cool crazy fast lazy brave calm dark light silent shiny golden silver frozen hidden secret magic cosmic electric neon turbo mega super ultra hyper royal cyber atomic mystic noble rapid sneaky swift clever gentle fierce funky grumpy jolly witty sleepy dizzy bold epic cute tiny big little fluffy spicy sweet salty cold hot rusty velvet crystal lunar solar stormy');
+var NOUN=NW('cat dog fox wolf bear lion tiger panda koala otter eagle hawk raven owl shark whale dolphin dragon phoenix knight wizard ninja pirate samurai robot rocket comet planet star moon sun cloud storm river ocean forest mountain desert island castle tower bridge garden coffee pizza cookie donut waffle muffin taco sushi ramen pepper lemon cherry peach mango banana');
+// слова (3–6 букв): «слово» ×2 к цене
+var WORDS=NW('fox sun moon lion star fire ice cat god zen sky wave gold ace boss sea air sand rain snow wind cloud leaf tree rock stone wood iron steel glass paper cube dice card king queen jack joker wolf bear hawk eagle shark tiger panda zebra koala otter horse snake frog crab bee ant bat owl duck swan crow dove river lake ocean beach coast field hill peak cave island storm flash spark blaze flame frost shadow light night dawn dusk day week year hour time space orbit comet star nova pulse beat tune song note drum bass jazz rock punk pop disco dance game play win run jump fly swim race goal score level boss quest magic spell charm luck fate hope dream wish love heart soul mind spirit ghost angel demon hero legend myth tale story book page word line dot point arrow bolt shield sword blade armor crown throne castle tower gate door key lock chain ring gem pearl ruby opal jade amber coral');
+// сильные слова в стиле каталога Fragment (легендарные)
+var FRAG_L=NW('cash gold bank love game king queen money trade wallet poker vip luck rich boss lion tiger wolf storm fire magic pixel robot ninja pirate rocket diamond silver lucky royal power force glory honor chief prime elite alpha omega delta sigma gamma nexus vertex matrix vector cyber quantum atom proton neutron photon plasma fusion turbo nitro rapid swift flash bolt thunder lightning blizzard volcano meteor galaxy cosmos nebula pulsar quasar orbit rocket falcon raptor viper cobra python panther jaguar cougar phoenix dragon titan giant legend mythic oracle wizard sorcer hunter archer knight paladin templar ranger rogue bandit outlaw sheriff captain admiral general major sergeant master expert genius wisdom sage guru coach mentor trader broker dealer banker miner farmer builder maker creator founder leader winner champ hero star ace pro vault safe coin token chain block ledger stake yield swap bridge forge craft studio label brand agency market store shop deal offer bonus prize jackpot lotto casino bingo domino chess poker bet odds');
+// короткие (мифические): 1–3 символа и аббревиатуры
+var FRAG_M=NW('ton nft vip btc eth usd ai tg id ok go me win pay art ace xyz abc one two six ten top max pro new hot big low run fly sky sun ice fox cat dog bot app web net dev ops api sdk gpu cpu ram ssd hub lab gem key box bit hex bin dex dao eur gbp cny jpy rub uah kzt aed idx fed ecb imf wto');
+// топ-слова (божественные): города, деньги, крипта, бренды-понятия
+var DIVINE=NW('dubai moscow london paris bitcoin crypto tokyo casino miami vegas berlin rome madrid istanbul bali telegram wallet invest bank money gold trade bet poker jackpot billion million dollar euro rouble yuan yen franc cash credit capital equity asset profit income salary bonus reward prize luxury premium royal empire kingdom palace castle diamond platinum emerald sapphire crystal ethereum solana ripple dogecoin litecoin stellar cardano polkadot avalanche uniswap chainlink binance coinbase kraken ledger metaverse blockchain airdrop staking mining hodl whale moon rocket lambo yacht jet island paradise heaven olympus atlantis eden zeus apollo athena poseidon odin thor loki titan genesis infinity eternity universe cosmos galaxy sydney toronto singapore hongkong shanghai beijing seoul bangkok monaco geneva zurich vienna prague warsaw kyiv minsk tbilisi baku almaty tashkent');
+function uniqW(a){var o={},r=[];a.forEach(function(x){if(!o[x]){o[x]=1;r.push(x)}});return r}
+var _sn=NAMES.filter(function(x){return x.length<6});NAMES=NAMES.filter(function(x){return x.length>=6});SHORTN=SHORTN.concat(_sn);DIVINE=DIVINE.filter(function(x){return x.length>=4});
+NAMES=uniqW(NAMES);SHORTN=uniqW(SHORTN);SURN=uniqW(SURN);WORDS=uniqW(WORDS);FRAG_L=uniqW(FRAG_L);FRAG_M=uniqW(FRAG_M);DIVINE=uniqW(DIVINE);
+// быстрый поиск для множителей
+var NSET={d:{},w:{},n:{}};
+DIVINE.forEach(function(x){NSET.d[x]=1});WORDS.concat(FRAG_L).forEach(function(x){NSET.w[x]=1});NAMES.concat(SHORTN).forEach(function(x){NSET.n[x]=1});
+
+// ---- Настройки из бота: шансы, цены, шанс крафта, стоимость прокрутки, пополнение словарей ----
+// Хранятся на сервере (таблица config, ключ game). Клиент получает их при запуске, сервер — перед каждым действием.
+// Формат: {w:{rare:12}, rng:{rare:[20,80]}, cost:100, craft:{rare:.5}, add:{words:['neo']}, del:{words:['cat']}}
+var POOLN=['names','surn','short','words','legend','mythic','divine','adj','noun'];
+function poolRef(k){return k=='names'?NAMES:k=='surn'?SURN:k=='short'?SHORTN:k=='words'?WORDS:k=='legend'?FRAG_L:k=='mythic'?FRAG_M:k=='divine'?DIVINE:k=='adj'?ADJ:k=='noun'?NOUN:null}
+var GC0=null;
+function gcBase(){if(GC0)return;GC0={w:TIERS.map(function(t){return t.w}),rng:JSON.parse(JSON.stringify(RNG)),cost:COST,craft:CRAFT_P.slice(),pools:{}};POOLN.forEach(function(k){GC0.pools[k]=poolRef(k).slice()})}
+function nsetBuild(){NSET.d={};NSET.w={};NSET.n={};DIVINE.forEach(function(x){NSET.d[x]=1});WORDS.concat(FRAG_L).forEach(function(x){NSET.w[x]=1});NAMES.concat(SHORTN).forEach(function(x){NSET.n[x]=1})}
+function gcWord(x){return typeof x=='string'&&/^[a-z0-9_]{1,32}$/.test(x)}
+function applyGameCfg(c){gcBase();
+ TIERS.forEach(function(t,i){t.w=GC0.w[i]});Object.keys(GC0.rng).forEach(function(k){RNG[k]=GC0.rng[k].slice()});COST=GC0.cost;CRAFT_P=GC0.craft.slice();
+ POOLN.forEach(function(k){var a=poolRef(k);a.length=0;GC0.pools[k].forEach(function(x){a.push(x)})});
+ if(c&&typeof c=='object'){
+  TIERS.forEach(function(t,i){var v=c.w&&+c.w[t.id];if(v>=.001&&v<=1000)t.w=v;var r=c.rng&&c.rng[t.id];if(r&&+r[0]>=1&&+r[1]>=+r[0]&&+r[1]<=1e7)RNG[t.id]=[Math.round(r[0]),Math.round(r[1])];var p=c.craft&&c.craft[t.id];if(p!==undefined&&+p>=0&&+p<=1&&i<CRAFT_P.length)CRAFT_P[i]=+p});
+  if(+c.cost>=1&&+c.cost<=1e5)COST=Math.round(c.cost);
+  POOLN.forEach(function(k){var a=poolRef(k),d=c.del&&c.del[k],ad=c.add&&c.add[k];
+   if(Array.isArray(d))d.forEach(function(x){var j=a.indexOf(x);if(j>=0&&a.length>3)a.splice(j,1)});
+   if(Array.isArray(ad))ad.forEach(function(x){if(gcWord(x)&&a.indexOf(x)<0&&a.length<3000)a.push(x)})})}
+ nsetBuild()}
+function cfgInfo(){var tot=0,i;TIERS.forEach(function(t){tot+=t.w});
+ return{tiers:TIERS.map(function(t,i){return{id:t.id,name:t.name,w:t.w,pct:t.w/tot*100,rng:RNG[t.id].slice(),craft:CRAFT_P[i]||0}}),cost:COST,pools:POOLN.map(function(k){return[k,poolRef(k).length]})}}
+
 // Математика редкости и цены: шансы, множители, оценка ника
 function tier(id){return TIERS.filter(function(t){return t.id==id})[0]}
 function ti(id){return TIERS.indexOf(tier(id))}
 function level(){return Math.floor(Math.sqrt(S.xp/25))+1}
-function lf(){return Math.max(S.luck>0?3:1,S.pity||1)}
+function lf(){return Math.max(S.luck>0?LUCK_F:1,S.pity||1)}
 function noteBest(r){if(!r)return;if(!S.best||worth(r)>worth(S.best))S.best={u:r.u,tier:r.tier,base:r.base,odds:r.odds,ts:r.ts||Date.now()}}
 function pickTier(){var w=TIERS.map(function(t,i){return t.w*(i>=2?lf():1)}),sum=w.reduce(function(a,b){return a+b},0),r=Math.random()*sum;for(var i=0;i<w.length;i++){r-=w[i];if(r<=0)return TIERS[i]}return TIERS[0]}
 function oddsOf(t){var w=TIERS.map(function(x,i){return x.w*(i>=2?lf():1)}),sum=w.reduce(function(a,b){return a+b},0);return Math.round(sum/(t.w*(TIERS.indexOf(t)>=2?lf():1)))}
 function baseFor(id){var g=RNG[id];return Math.round(g[0]+Math.pow(Math.random(),1.4)*(g[1]-g[0]))}
 function mult(u){var m=1,tg=[],pr=[],n=u.length;
  function add(x,lb){m*=x;tg.push(lb);pr.push([lb,x])}
- if(DIVINE.indexOf(u)>=0)add(5,'топ-слово');else if(WORDS.indexOf(u)>=0||FRAG_L.indexOf(u)>=0)add(2,'слово');else if(NAMES.indexOf(u)>=0||SHORTN.indexOf(u)>=0)add(1.5,'имя');
+ if(NSET.d[u])add(5,'топ-слово');else if(NSET.w[u])add(2,'слово');else if(NSET.n[u])add(1.5,'имя');
  if(n<=3)add(3,'короткий');else if(n==4)add(2,'короткий');
  if(n>=3&&u===u.split('').reverse().join(''))add(2,'зеркало');
  if(/(777|888|999|000|007|123|321)/.test(u))add(2,'красивые цифры');
@@ -113,7 +151,7 @@ function autoResolve(){var r=S.pending;if(!r)return{err:'none'};var a=autoAction
  return{ok:1,a:a}}
 function claimChest(){tqE();if(!allClaimed()||S.tq.c.chest)return{err:'no'};var cj=chestInfo();S.yuz+=cj.rew;if(cj.n>=7){S.ton=r3((S.ton||0)+.01)}
  S.streak=cj.n;S.lastChest=dk(new Date());S.tq.c.chest=1;led('Бонус дня');save();hap({type:'notification',notification_type:'success'});toast('Бонус дня +'+money(cj.rew));draw();return{ok:1}}
-function buyLuck(){if(S.yuz<100){toast('Не хватает баланса');return{err:'poor'}}S.yuz-=100;S.luck=(S.luck||0)+10;led('Удача ×3');save();toast('Удача на 10 прокруток');draw();return{ok:1}}
+function buyLuck(){if(S.yuz<LUCK_COST){toast('Не хватает баланса');return{err:'poor'}}S.yuz-=LUCK_COST;S.luck=(S.luck||0)+10;led('Удача ×1,5');save();toast('Удача на 10 прокруток');draw();return{ok:1}}
 function exchangeTon(t){t=r3(+t);if(!(t>=.001)||t>1000)return{err:'arg'};var cst=Math.ceil(t*RATE*1.1);if(S.yuz<cst){toast('Не хватает звёзд');return{err:'poor'}}
  S.yuz-=cst;S.ton=r3((S.ton||0)+t);led('Обмен ⭐ → TON');save();hap({type:'notification',notification_type:'success'});toast('+'+tonF(t)+' TON');draw();return{ok:1}}
 function wheelRoll(){wheelSync();if(S.wt<=0)return{err:'no'};var tot=WHEEL.reduce(function(a,b){return a+b.w},0),r=Math.random()*tot,k=0;
@@ -235,7 +273,7 @@ function wheelSync(){if(S.wt===undefined){S.wt=(Date.now()-(S.wheelAt||0)>=wheel
  var k=Math.floor((now-S.wl)/ms);if(k>0){S.wt=Math.min(cap,S.wt+k);S.wl+=k*ms;if(S.wt>=cap)S.wl=now}}
 function wheelReady(){wheelSync();return S.wt>0}
 function wheelLeft(){wheelSync();if(S.wt>=wcap())return '';var t=Math.max(0,Math.ceil((wheelMs()-(Date.now()-S.wl))/60000));return Math.floor(t/60)+' ч '+(t%60)+' мин'}
-function prizeText(p){return p.t=='star'?money(p.v):p.t=='luck'?'удача ×3 на '+p.v+' прокруток':p.t=='free'?'бесплатная прокрутка':tonF(p.v)+' TON'}
+function prizeText(p){return p.t=='star'?money(p.v):p.t=='luck'?'удача ×1,5 на '+p.v+' прокруток':p.t=='free'?'бесплатная прокрутка':tonF(p.v)+' TON'}
 function prizeChance(p){var tot=WHEEL.reduce(function(a,b){return a+b.w},0),v=p.w/tot*100;return (v<10?String(Math.round(v*10)/10):String(Math.round(v))).replace('.',',')+'%'}
 var WG={luck:'<circle cx="9" cy="9" r="3.4"/><circle cx="15" cy="9" r="3.4"/><circle cx="9" cy="14.6" r="3.4"/><circle cx="15" cy="14.6" r="3.4"/>',
  free:'<path d="M3 8h18v3a2 2 0 0 0 0 4v3H3v-3a2 2 0 0 0 0-4z"/>',
@@ -274,7 +312,7 @@ function shopHtml(){var pr=isPrem();
   '<ul class="premp"><li>Колесо фортуны каждые 3 часа вместо 5</li><li>Комиссия маркета 3% вместо 5%</li><li>+1 бесплатная прокрутка каждый день</li><li>Значок Premium в профиле</li></ul>'+
   '<button class="premb" data-act="buyprem">'+(PAY_LIVE?(pr?'Продлить':'Подключить')+' · '+PREM_PRICE+' Stars':'Оплата скоро')+'</button></div>'+
   '<div class="sec">Пакеты звёзд</div><div class="grp">'+PACKS.map(function(p){return '<button class="go" data-bp="'+p.id+'"><span class="ic" style="background:#ffb020">'+SI(22)+'</span><div>'+fmt(p.stars)+' ⭐'+(p.tag?' <span class="badge sm" style="background:#34c759">'+p.tag+'</span>':'')+'</div><small style="margin-left:auto;color:var(--blue)">'+p.price+' Stars</small></button>'}).join('')+'</div>'+
-  '<div class="sec">Ускорители</div><div class="grp"><button class="go" data-act="luck"><span class="ic" style="background:#34c759">'+ei('🍀')+'</span><div>Удача ×3<br><small style="margin:0">на 10 прокруток</small></div><small style="margin-left:auto;color:var(--blue)">'+money(100)+'</small></button>'+
+  '<div class="sec">Ускорители</div><div class="grp"><button class="go" data-act="luck"><span class="ic" style="background:#34c759">'+ei('🍀')+'</span><div>Удача ×1,5<br><small style="margin:0">на 10 прокруток</small></div><small style="margin-left:auto;color:var(--blue)">'+money(LUCK_COST)+'</small></button>'+
   '<button class="go" data-act="buywr"><span class="ic" style="background:#ff9f0a">'+ei('🎡')+'</span><div>Ещё одна попытка колеса<br><small style="margin:0">копится, не сгорает</small></div><small style="margin-left:auto;color:var(--blue)">'+WR_PRICE+' Stars</small></button></div>'+
   '<div class="sec">Скоро</div><div class="grp"><div class="go"><span class="ic" style="background:#a259f7">'+ei('🏆')+'</span><div>Battle Pass<br><small style="margin:0">награды за прокрутки</small></div><small style="margin-left:auto">скоро</small></div><div class="go"><span class="ic" style="background:#ff5d8f">'+ei('🎨')+'</span><div>Рамки и темы профиля</div><small style="margin-left:auto">скоро</small></div></div>'+
   '<div class="foot">Оплата будет через Telegram Stars (XTR). Пока она не подключена, покупки за Stars недоступны.</div>'}
@@ -408,13 +446,33 @@ function tickTimers(){var now=Date.now();
  if(scr=='market'){var q=document.querySelectorAll('[data-end]');for(var i=0;i<q.length;i++){var lf=q[i].getAttribute('data-end')-now;q[i].textContent=tleft(lf);q[i].classList.toggle('hot',lf<30000)}}}
 
 // Ядро генератора: сборка ника и прокрутка
-function build(id){switch(id){
- case 'common':var k=ri(0,2);if(k==0)return rnd(NAMES)+'_'+rnd(SURN)+'_'+ri(10,99);if(k==1)return pron(ri(6,9))+ri(100,9999);return rnd(SHORTN)+'_'+rnd(WORDS)+ri(1,999);
- case 'norm':return Math.random()<.5?pron(ri(8,12)):rnd(NAMES)+rnd(WORDS);
- case 'rare':return Math.random()<.7?rnd(NAMES):pron(ri(6,7));
- case 'epic':return Math.random()<.7?rnd(SHORTN):pron(ri(4,5));
- case 'legend':return Math.random()<.75?rnd(FRAG_L.concat(WORDS)):pron(3);
- case 'mythic':return Math.random()<.45?'abcdefghijklmnopqrstuvwxyz'.charAt(ri(0,25)):rnd(FRAG_M);
+function build(id){var r=Math.random();switch(id){
+ case 'common':
+  if(r<.22)return rnd(NAMES)+'_'+rnd(SURN)+'_'+ri(10,99);
+  if(r<.42)return pron(ri(6,9))+ri(100,9999);
+  if(r<.62)return rnd(SHORTN)+'_'+rnd(WORDS)+ri(1,999);
+  if(r<.82)return rnd(ADJ)+'_'+rnd(NOUN)+'_'+ri(10,9999);
+  return rnd(SURN)+rnd(SHORTN)+ri(1,99)+'_'+pron(ri(2,3));
+ case 'norm':
+  if(r<.3)return pron(ri(8,12));
+  if(r<.55)return rnd(NAMES)+rnd(WORDS);
+  if(r<.8)return rnd(ADJ)+rnd(NOUN);
+  return rnd(SHORTN)+'_'+rnd(SURN);
+ case 'rare':
+  if(r<.7)return rnd(NAMES);
+  if(r<.85)return pron(ri(6,7));
+  return rnd(ADJ)+rnd(SHORTN);
+ case 'epic':
+  if(r<.62)return rnd(SHORTN);
+  if(r<.88)return pron(ri(4,5));
+  return rnd(WORDS.filter(function(w){return w.length>=5}));
+ case 'legend':
+  if(r<.78)return rnd(FRAG_L.concat(WORDS.filter(function(w){return w.length<=4})));
+  return pron(3);
+ case 'mythic':
+  if(r<.3)return 'abcdefghijklmnopqrstuvwxyz'.charAt(ri(0,25));
+  if(r<.5)return pron(2);
+  return rnd(FRAG_M);
  default:return rnd(DIVINE)}}
 function spin(){if(busy)return;
  if(S.pending)return toast('Сначала реши: продать или оставить');
@@ -472,7 +530,7 @@ function craftHtml(){var c=craftTiers(),can=TIERS.map(function(t,i){return c[i]>
  var info='<div class="crinfo"><div class="crt"><span style="color:'+t.color+'">'+t.name+'</span><i>→</i><span style="color:'+nt.color+'">'+nt.name+'</span></div><div class="crp"><b>'+p+'%</b><small>шанс успеха</small></div></div>'+
   '<div class="crnote">Нужно выбрать 3 ника. Не повезло — получишь один новый ник прежней редкости, два других сгорят.</div>';
  var rows='<div class="grp">'+L.map(function(c2){var m=mult(c2.u),on=CF.sel.indexOf(c2.u)>=0;
-  return '<button class="go hrw'+(on?' sel':'')+'" data-cp="'+c2.u+'"><div class="hav '+bdCls(t)+'" style="'+bdVars(t)+'"><span>'+esc(c2.u.charAt(0).toUpperCase())+'</span></div><div class="hm"><b>@'+esc(c2.u)+'</b><small>'+(m.m>1?'×'+fm(m.m):'без множителей')+'</small></div><div class="hr"><b>'+money(worth(c2))+'</b><small>'+(on?'✓ выбран':'')+'</small></div></button>'}).join('')+'</div>';
+  return '<button class="go hrw'+(on?' sel':'')+'" data-cp="'+c2.u+'"><div class="hav '+bdCls(t)+'" style="'+bdVars(t)+'"><span>'+esc(c2.u.charAt(0))+'</span></div><div class="hm"><b class="mono">@'+esc(c2.u)+'</b><small>'+(m.m>1?'×'+fm(m.m):'без множителей')+'</small></div><div class="hr"><b>'+money(worth(c2))+'</b><small>'+(on?'✓ выбран':'')+'</small></div></button>'}).join('')+'</div>';
  var n=CF.sel.length;
  return chips+info+rows+'<div class="crbar"><button class="pbtn" style="width:100%" data-act="craftgo"'+(n==3?'':' disabled')+'>'+(n==3?'Скрафтить · сгорит '+money(sum):'Выбрано '+n+' из 3')+'</button></div>'}
 function craftResult(o){var r=o.r,t=tier(r.tier),ov=document.createElement('div');ov.className='ov';
@@ -493,6 +551,9 @@ var INTERNAL={refsApply:refsApply,giftSend:giftSend,giftRefund:giftRefund};
 function catchUp(){var now=Date.now(),last=S.tkAt||now,n=Math.min(120,Math.floor((now-last)/1000));S.tkAt=now;for(var i=0;i<n;i++)auTick();if(!n)auTick()}
 return{
  PREFK:PREFK,
+ setConfig:function(c){applyGameCfg(c)},
+ cfgInfo:cfgInfo,
+ poolWords:function(k){var a=poolRef(k);return a?a.slice():[]},
  allowed:function(fn){return Object.prototype.hasOwnProperty.call(ACT,fn)},
  fresh:function(){S=defState();initState();return S},
  run:function(state,fn,args,ctx){ctx=ctx||{};S=state;MSGS=[];ADM=!!ctx.adm;cur=null;initState();

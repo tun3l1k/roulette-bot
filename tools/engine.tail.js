@@ -9,6 +9,9 @@ var INTERNAL={refsApply:refsApply,giftSend:giftSend,giftRefund:giftRefund};
 function catchUp(){var now=Date.now(),last=S.tkAt||now,n=Math.min(120,Math.floor((now-last)/1000));S.tkAt=now;for(var i=0;i<n;i++)auTick();if(!n)auTick()}
 return{
  PREFK:PREFK,
+ setConfig:function(c){applyGameCfg(c)},
+ cfgInfo:cfgInfo,
+ poolWords:function(k){var a=poolRef(k);return a?a.slice():[]},
  allowed:function(fn){return Object.prototype.hasOwnProperty.call(ACT,fn)},
  fresh:function(){S=defState();initState();return S},
  run:function(state,fn,args,ctx){ctx=ctx||{};S=state;MSGS=[];ADM=!!ctx.adm;cur=null;initState();
