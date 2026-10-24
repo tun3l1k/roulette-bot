@@ -1,6 +1,7 @@
 // Бот «Юзерок: Рулетка» + сервер экономики (Cloudflare Workers + D1). Движок игры лежит в engine.js
 import { createEngine } from './engine.js';
 import { adminMessage, adminCallback, adminCode, gameCfg } from './botadmin.js';
+import { p2pRoute, P2P_SCHEMA } from './p2p.js';
 const E = createEngine();
 const GAME_URL = 'https://tun3l1k.github.io/roulette/';
 const KEYBOARD = { inline_keyboard: [[{ text: '🎰 Играть', web_app: { url: GAME_URL } }]] };
@@ -76,6 +77,7 @@ async function ensure(env) {
     env.DB.prepare('CREATE TABLE IF NOT EXISTS stats (id TEXT PRIMARY KEY, spins INTEGER)'),
     env.DB.prepare('CREATE TABLE IF NOT EXISTS referrals (invitee TEXT PRIMARY KEY, inviter TEXT, name TEXT, ts INTEGER)'),
     env.DB.prepare('CREATE TABLE IF NOT EXISTS config (k TEXT PRIMARY KEY, v TEXT)'),
+    ...P2P_SCHEMA.map((q) => env.DB.prepare(q)),
     env.DB.prepare('CREATE TABLE IF NOT EXISTS bans (id TEXT PRIMARY KEY, reason TEXT, ts INTEGER)'),
     env.DB.prepare('CREATE TABLE IF NOT EXISTS promos (code TEXT PRIMARY KEY, kind TEXT, amount REAL, uses INTEGER, ts INTEGER)'),
     env.DB.prepare('CREATE TABLE IF NOT EXISTS promo_used (code TEXT, id TEXT, PRIMARY KEY (code, id))'),
@@ -244,6 +246,10 @@ async function api(request, env, url) {
     }
     const d = diffState(r.before, r.out.S);
     return json({ ok: true, patch: d.patch, del: d.del, msgs: r.out.msgs });
+  }
+  if (url.pathname.startsWith('/api/p2p/')) {
+    const maint = !adm && (await readMaint(env)).maint;
+    return p2pRoute({ env, runAct, diffState, json, tg, uid, nm, adm, maint }, url.pathname, body);
   }
   if (url.pathname === '/api/refs') {
     const t = await env.DB.prepare(

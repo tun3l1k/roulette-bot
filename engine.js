@@ -149,7 +149,7 @@ function spinRoll(){if(S.pending)return{err:'pending'};var fr=S.free>0;if(!fr&&S
  if(fr)S.free--;else{S.yuz-=COST;led('Прокрутка')}
  var t=pickTier(),r={u:build(t.id),tier:t.id,base:baseFor(t.id),k:rollBonus(),odds:oddsOf(t),ts:Date.now()};
  S.pending=r;noteBest(r);S.spins++;S.xp+=XPT[t.id];if(S.luck>0)S.luck--;
- S.pity=0;if(S.spins%500==0)S.pity=5;else if(S.spins%50==0)S.pity=2;if(S.pity)toast('Гарант! Следующая прокрутка: удача ×'+S.pity);
+ levelCheck();S.pity=0;if(S.spins%500==0)S.pity=5;else if(S.spins%50==0)S.pity=2;if(S.pity)toast('Гарант! Следующая прокрутка: удача ×'+S.pity);
  S.hist.unshift(r);if(S.hist.length>50)S.hist.pop();if(ti(r.tier)>=2){S.rare.unshift(r);if(S.rare.length>100)S.rare.pop()}
  tq('spin10');if(ti(r.tier)>=2)tq('rare1');
  if(Math.random()<.002){var tf=r3(.01+Math.random()*.04);S.ton=r3((S.ton||0)+tf);led('Находка TON');toast('Находка! +'+tonF(tf)+' TON')}
@@ -182,7 +182,8 @@ function takeForSend(kind,id){var rec=null;
  return rec}
 function sendDone(kind,rec,to){toast('Ник @'+rec.u+' отправлен @'+to)}
 function inboxReceive(items){items.forEach(function(it){var p=it.p;
- if(it.k=='nick'){S.coll.unshift(p);noteBest(p);toast('Подарок от @'+it.from+': ник @'+p.u)}})}
+ if(it.k=='nick'){S.coll.unshift(p);noteBest(p);toast(p.note||('Подарок от @'+it.from+': ник @'+p.u));delete p.note}
+  else if(it.k=='cash'){var a=Math.round(+p.amount)||0;if(a>0&&a<1e10){S.yuz+=a;led(p.note||'Сделка с игроком');toast(p.note||('+'+money(a)))}}})}
 
 // Деньги и продажа: звёзды, TON, продажа ников
 function money(n){return fmt(Math.round(n))+' ⭐'}
@@ -536,6 +537,31 @@ function toggleAuto(){if(AS){stopAuto('⏹ Автопрокрутка остан
  AS=true;ASN=0;paintHome();autoLoop()}
 function stopAuto(m){AS=false;clearTimeout(ASt);if(m)toast(m);paintHome()}
 
+// Ежедневный вход (серия 7 дней) и награда за новый уровень
+var LOGIN_R=[{s:200},{s:300,f:1},{s:500},{s:700,f:2},{s:1000},{s:1500,f:3},{s:3000,f:5,l:20}];
+function dayNum(tz){var o=Math.max(-840,Math.min(840,Math.round(+tz)||0));return Math.floor((Date.now()-o*60000)/86400000)}
+function loginInfo(tz){var lg=S.lg||{d:-9,n:0,at:0},t=dayNum(tz);
+ return{done:lg.d==t,n:lg.d==t?lg.n:(lg.d==t-1?lg.n:0),next:(lg.d==t?lg.n:(lg.d==t-1?lg.n:0))+(lg.d==t?0:1),lost:lg.d<t-1&&lg.n>0}}
+function claimLogin(tz){var t=dayNum(tz),lg=S.lg;
+ if(lg&&(lg.d>=t||Date.now()-(lg.at||0)<20*3600e3))return{err:'done'};
+ var n=lg&&lg.d==t-1?lg.n+1:1,r=LOGIN_R[(n-1)%LOGIN_R.length];
+ S.yuz+=r.s;if(r.f)S.free=(S.free||0)+r.f;if(r.l)S.luck=(S.luck||0)+r.l;
+ S.lg={d:t,n:n,at:Date.now(),t:((lg&&lg.t)||0)+1};led('Ежедневный вход');save();
+ hap({type:'notification',notification_type:'success'});toast('День '+n+': +'+money(r.s)+(r.f?' и '+r.f+' прокр.':'')+(r.l?' · удача на '+r.l:''));draw();return{ok:1,n:n}}
+function loginRewardText(r){return money(r.s)+(r.f?' · '+r.f+' прокр.':'')+(r.l?' · удача ×1,5':'')}
+function dailyHtml(){var tz=new Date().getTimezoneOffset(),i=loginInfo(tz),cyc=LOGIN_R.length,cur=i.done?((i.n-1)%cyc):(i.next-1)%cyc;
+ var head='<div class="refc"><div class="refh">Серия входов: '+(i.done?i.n:i.n)+' '+(i.n==1?'день':'дней')+'</div><div class="refp">'+(i.done?'Награда за сегодня получена. Возвращайся завтра, серия не прервётся.':(i.lost?'Серия прервалась, начни заново: день 1.':'Заходи каждый день: награды растут до 7-го дня и повторяются.'))+'</div></div>';
+ var rows='<div class="grp">'+LOGIN_R.map(function(r,k){var got=i.done?k<=cur:k<cur,now=!i.done&&k==cur;
+  return '<div class="go'+(now?' sel':'')+'"><span style="width:12px;height:12px;border-radius:50%;background:'+(got?'#34c759':now?'var(--blue)':'var(--sep)')+';flex:none"></span><span>День '+(k+1)+'</span><small style="color:'+(got?'#34c759':now?'var(--text)':'var(--sub)')+'">'+(got?'✓ ':'')+loginRewardText(r)+'</small></div>'}).join('')+'</div>';
+ var btn=i.done?'<button class="pbtn" style="width:100%;margin-top:14px" disabled>Получено сегодня</button>':'<button class="pbtn" style="width:100%;margin-top:14px" data-act="claimlogin">Получить · '+loginRewardText(LOGIN_R[cur])+'</button>';
+ var lv='<div class="sec">Награды за уровни</div><div class="grp"><div class="go"><span>Новый уровень</span><small>50 ⭐ × уровень + 50</small></div><div class="go"><span>Каждый 5-й уровень</span><small>+5 прокруток</small></div><div class="go"><span>Сейчас</span><small>Уровень '+level()+'</small></div></div>';
+ return head+btn+'<div class="sec">Награды за 7 дней</div>'+rows+lv}
+function levelCheck(){var L=level();if(S.lvR===undefined){S.lvR=L;return}
+ while(S.lvR<L&&S.lvR<500){S.lvR++;var st=50*S.lvR+50,fr=S.lvR%5==0?5:0;S.yuz+=st;if(fr)S.free=(S.free||0)+fr;led('Уровень '+S.lvR);toast('Уровень '+S.lvR+'! +'+money(st)+(fr?' и '+fr+' прокруток':''))}}
+// Сделки между игроками: деньги уходят в залог на сервере (p2pPay), возвращаются через p2pRefund или входящие «cash»
+function p2pPay(a,slot){a=Math.round(+a);if(!(a>0)||a>1e10)return{err:'arg'};if(slot&&collFull())return{err:'full'};if(S.yuz<a)return{err:'poor'};S.yuz-=a;led('Сделка с игроком');save();return{ok:1}}
+function p2pRefund(a){a=Math.round(+a);if(a>0&&a<1e10){S.yuz+=a;led('Возврат по сделке');save()}return{ok:1}}
+
 // Крафт: 3 ника одной редкости → шанс получить ник редкостью выше
 var CRAFT_P=[.6,.55,.5,.45,.35,.25]; // шанс успеха для обычных…мифических; божественные не крафтятся
 var CF={t:null,sel:[]};
@@ -551,7 +577,7 @@ function craftRoll(us){
  S.coll=S.coll.filter(function(x){return u3.indexOf(x.u)<0});
  var u,k=0;do{u=build(nt.id);k++}while(k<30&&(S.coll.some(function(x){return x.u==u})||(S.pending&&S.pending.u==u)));
  var r={u:u,tier:nt.id,base:baseFor(nt.id),k:rollBonus(),odds:oddsOf(nt),ts:Date.now()};
- S.coll.unshift(r);noteBest(r);S.xp+=XPT[nt.id];S.crafts=(S.crafts||0)+1;if(win)S.craftWins=(S.craftWins||0)+1;
+ S.coll.unshift(r);noteBest(r);S.xp+=XPT[nt.id];levelCheck();S.crafts=(S.crafts||0)+1;if(win)S.craftWins=(S.craftWins||0)+1;
  led('Крафт: '+u3.map(function(x){return '@'+x}).join(', ')+' → @'+u);save();
  return{ok:1,win:win,r:r,p:p,from:u3.map(function(x,i){return items[i]})}}
 function craftTiers(){var c={};S.coll.forEach(function(x){c[ti(x.tier)]=(c[ti(x.tier)]||0)+1});return c}
@@ -581,9 +607,10 @@ function craftGo(){if(CF.sel.length!=3)return;var us=CF.sel.slice();CF.sel=[];
 toast=function(m){MSGS.push(String(m))};
 var BOTN=BOTS.map(function(b){return b[0]});
 function giftSend(kind,id,to){if(kind!='nick')return{err:'item'};var rec=takeForSend(kind,id);if(!rec)return{err:'item'};sendDone(kind,rec,to);return{ok:1,rec:rec}}
+function p2pTake(u){var rec=takeForSend('nick',String(u));return rec?{ok:1,rec:rec}:{err:'item'}}
 function giftRefund(kind,rec){if(kind=='nick')S.coll.unshift(rec);return{ok:1}}
-var ACT={keepPending:keepPending,sellPending:sellPending,sellOne:sellOne,sellBulk:sellBulk,claimTask:claimTask,claimChest:claimChest,buyLuck:buyLuck,exchangeTon:exchangeTon,bid:bid,buyLot:buyLot,cancelLot:cancelLot,acceptOffer:acceptOffer,rejectOffer:rejectOffer,listLot:listLot,autoResolve:autoResolve,admGrant:admGrant,admTake:admTake,admFree:admFree,admNick:admNick,tickNow:tickNow,resetAll:resetAll,craftRoll:craftRoll,spinRoll:spinRoll,wheelRoll:wheelRoll};
-var INTERNAL={refsApply:refsApply,giftSend:giftSend,giftRefund:giftRefund};
+var ACT={keepPending:keepPending,sellPending:sellPending,sellOne:sellOne,sellBulk:sellBulk,claimTask:claimTask,claimChest:claimChest,buyLuck:buyLuck,exchangeTon:exchangeTon,bid:bid,buyLot:buyLot,cancelLot:cancelLot,acceptOffer:acceptOffer,rejectOffer:rejectOffer,listLot:listLot,autoResolve:autoResolve,admGrant:admGrant,admTake:admTake,admFree:admFree,admNick:admNick,tickNow:tickNow,resetAll:resetAll,craftRoll:craftRoll,claimLogin:claimLogin,spinRoll:spinRoll,wheelRoll:wheelRoll};
+var INTERNAL={refsApply:refsApply,giftSend:giftSend,giftRefund:giftRefund,p2pTake:p2pTake,p2pPay:p2pPay,p2pRefund:p2pRefund};
 function catchUp(){var now=Date.now(),last=S.tkAt||now,n=Math.min(120,Math.floor((now-last)/1000));S.tkAt=now;for(var i=0;i<n;i++)auTick();if(!n)auTick()}
 return{
  PREFK:PREFK,
