@@ -100,8 +100,8 @@ async function cfgMessage(d, cmd, args, say) {
 const PANEL_KB = {
   inline_keyboard: [
     [{ text: '📊 Статистика', callback_data: 'a:stats' }, { text: '🏆 Топ игроков', callback_data: 'a:top' }],
-    [{ text: '🎲 Шансы', callback_data: 'a:chance' }, { text: '🛠 Тех. работы', callback_data: 'a:maint' }],
-    [{ text: '📖 Команды', callback_data: 'a:help' }],
+    [{ text: '💰 Выдать ⭐', callback_data: 'a:give' }, { text: '🎲 Шансы', callback_data: 'a:chance' }],
+    [{ text: '🛠 Тех. работы', callback_data: 'a:maint' }, { text: '📖 Команды', callback_data: 'a:help' }],
   ],
 };
 const BACK_KB = { inline_keyboard: [[{ text: '‹ Меню', callback_data: 'a:menu' }]] };
@@ -112,6 +112,13 @@ export const ADMIN_HELP = `🛡 <b>Админ-меню</b>
 /stats — статистика игры
 /player &lt;id|@ник&gt; — карточка игрока
 /give &lt;id|@ник&gt; star|ton &lt;сумма&gt; — выдать валюту
+/take &lt;id|@ник&gt; star|ton &lt;сумма&gt; — списать
+/free &lt;id|@ник&gt; &lt;N&gt; — бесплатные прокрутки
+/nick &lt;id|@ник&gt; &lt;редкость&gt; &lt;ник&gt; [бонус] — выдать ник
+/find &lt;ник&gt; — у кого лежит ник
+/ban &lt;id|@ник&gt; [причина], /unban, /bans — блокировки
+/promo add КОД star|spins N ЛИМИТ · del КОД · list — промокоды (игроки: /code КОД)
+/notice &lt;текст|off&gt; — объявление в игре
 /reset &lt;id|@ник&gt; — сбросить прогресс (с подтверждением)
 /maint on|off [текст] — тех. работы
 
@@ -221,6 +228,7 @@ export async function adminMessage(d, m, cmd) {
     });
     return true;
   }
+  if (['/take', '/free', '/nick', '/find', '/ban', '/unban', '/bans', '/notice', '/promo'].includes(cmd)) { await extraMessage(d, cmd, args, say); return true; }
   if (['/chance', '/price', '/craftp', '/cost', '/pool', '/cfg'].includes(cmd)) { await cfgMessage(d, cmd, args, say); return true; }
   if (cmd === '/maint') {
     const a = String(args[0] || '').toLowerCase();
@@ -247,6 +255,11 @@ export async function adminCallback(d, cb) {
   else if (data === 'a:stats') await edit(await statsText(env, d.readMaint));
   else if (data === 'a:top') await edit(await topText(env));
   else if (data === 'a:help') await edit(ADMIN_HELP);
+  else if (data === 'a:give') {
+    await ans();
+    await tg(env, 'sendMessage', { chat_id: cb.message.chat.id, text: '💰 Кому и сколько ⭐ выдать?\nОтветь на это сообщение: @ник 5000 (или id 5000)', reply_markup: { force_reply: true, input_field_placeholder: '@ник 5000' } });
+    return;
+  }
   else if (data === 'a:chance') { d.E.setConfig(await gameCfg(env, true)); await edit(chanceTable(d.E)); }
   else if (data === 'c:reset') {
     await saveCfg(env, {}); d.E.setConfig({});
@@ -274,4 +287,125 @@ export async function adminCallback(d, cb) {
     return;
   }
   await ans();
+}
+
+const TIER_IDS = ['common', 'norm', 'rare', 'epic', 'legend', 'mythic', 'divine'];
+async function targetRow(env, q) {
+  const id = await findId(env, q);
+  if (!id) return null;
+  const row = await env.DB.prepare('SELECT id, uname FROM players WHERE id = ?').bind(id).first();
+  return row || null;
+}
+const who = (r) => (r.uname ? '@' + esc(r.uname) : r.id);
+
+async function extraMessage(d, cmd, args, say) {
+  const { env } = d;
+  if (cmd === '/take') {
+    const t = await targetRow(env, args[0]);
+    const cur = String(args[1] || '').toLowerCase();
+    const kind = cur === 'ton' ? 'ton' : cur === 'star' || cur === 'stars' ? 'star' : null;
+    const amt = parseFloat(String(args[2] || '').replace(',', '.'));
+    if (!t || !kind || !(amt > 0) || amt > 1e9) { await say('Формат: /take &lt;id|@ник&gt; star|ton &lt;сумма&gt;'); return; }
+    await d.runAct(env, t.id, t.uname, true, 'admTake', [kind + ':' + amt], null, false);
+    await say(`✅ Списано <b>${kind === 'ton' ? amt + ' 💎' : nf(amt) + ' ⭐'}</b> у ${who(t)}`);
+    return;
+  }
+  if (cmd === '/free') {
+    const t = await targetRow(env, args[0]);
+    const n = Math.round(+args[1]);
+    if (!t || !(n > 0 && n <= 10000)) { await say('Формат: /free &lt;id|@ник&gt; &lt;1–10000&gt;'); return; }
+    await d.runAct(env, t.id, t.uname, true, 'admFree', [n], null, false);
+    await say(`✅ ${who(t)}: +${n} бесплатных прокруток`);
+    return;
+  }
+  if (cmd === '/nick') {
+    const t = await targetRow(env, args[0]);
+    const tr = tierId(args[1]), nm = String(args[2] || '').toLowerCase().replace(/^@/, '');
+    const k = args[3] ? +args[3] : 0;
+    if (!t || !tr || !/^[a-z0-9_]{1,32}$/.test(nm)) { await say('Формат: /nick &lt;id|@ник&gt; &lt;редкость&gt; &lt;ник&gt; [бонус 1–100]'); return; }
+    const r = await d.runAct(env, t.id, t.uname, true, 'admNick', [{ tier: tr, u: nm, k }], null, false);
+    const res = r.out.res;
+    await say(res && res.ok ? `✅ @${esc(nm)} (${tr}${res.r.k > 1 ? ', бонус ×' + res.r.k : ''}) выдан ${who(t)}` : res && res.err === 'dup' ? 'У игрока уже есть такой ник' : 'Не получилось выдать ник');
+    return;
+  }
+  if (cmd === '/find') {
+    const nm = String(args[0] || '').toLowerCase().replace(/^@/, '');
+    if (!/^[a-z0-9_]{1,32}$/.test(nm)) { await say('Формат: /find &lt;ник&gt;'); return; }
+    const r = await env.DB.prepare("SELECT id, uname FROM players WHERE state LIKE ? LIMIT 10").bind('%"u":"' + nm + '"%').all();
+    const rows = (r.results || []).map((x) => `• ${who(x)} · <code>${x.id}</code>`);
+    await say(rows.length ? `🔎 @${esc(nm)} лежит у:\n${rows.join('\n')}` : `@${esc(nm)} ни у кого не найден`);
+    return;
+  }
+  if (cmd === '/ban') {
+    const id = await findId(env, args[0]);
+    if (!id) { await say('Формат: /ban &lt;id|@ник&gt; [причина]'); return; }
+    if (d.isAdmin(env, id)) { await say('Админа банить нельзя'); return; }
+    await env.DB.prepare('INSERT INTO bans (id, reason, ts) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET reason = excluded.reason, ts = excluded.ts').bind(id, args.slice(1).join(' ').slice(0, 200), Date.now()).run();
+    await say(`⛔ Игрок <code>${id}</code> заблокирован`);
+    return;
+  }
+  if (cmd === '/unban') {
+    const id = await findId(env, args[0]);
+    if (!id) { await say('Формат: /unban &lt;id|@ник&gt;'); return; }
+    await env.DB.prepare('DELETE FROM bans WHERE id = ?').bind(id).run();
+    await say(`✅ Игрок <code>${id}</code> разблокирован`);
+    return;
+  }
+  if (cmd === '/bans') {
+    const r = await env.DB.prepare('SELECT b.id AS id, b.reason AS reason, p.uname AS uname FROM bans b LEFT JOIN players p ON p.id = b.id ORDER BY b.ts DESC LIMIT 30').all();
+    const rows = (r.results || []).map((x) => `• ${x.uname ? '@' + esc(x.uname) : x.id} <code>${x.id}</code>${x.reason ? ' — ' + esc(x.reason) : ''}`);
+    await say('⛔ <b>Блокировки</b>\n\n' + (rows.join('\n') || 'Пока никого'));
+    return;
+  }
+  if (cmd === '/notice') {
+    const text = args.join(' ').trim();
+    if (!text) { const r = await env.DB.prepare("SELECT v FROM config WHERE k = 'notice'").first(); await say(r && r.v ? '📢 Сейчас в игре:\n' + esc(r.v) : 'Объявления нет. /notice &lt;текст&gt; — показать, /notice off — убрать'); return; }
+    const off = text.toLowerCase() === 'off';
+    await env.DB.prepare('INSERT INTO config (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v').bind('notice', off ? '' : text.slice(0, 400)).run();
+    await say(off ? '✅ Объявление убрано' : '📢 Объявление опубликовано: игроки увидят его при входе');
+    return;
+  }
+  if (cmd === '/promo') {
+    const act = String(args[0] || '').toLowerCase();
+    if (act === 'list' || !act) {
+      const r = await env.DB.prepare('SELECT code, kind, amount, uses FROM promos ORDER BY ts DESC LIMIT 30').all();
+      const rows = (r.results || []).map((x) => `<code>${esc(x.code)}</code> — ${x.kind === 'spins' ? nf(x.amount) + ' прокруток' : nf(x.amount) + ' ⭐'}, осталось ${x.uses}`);
+      await say('🎟 <b>Промокоды</b>\n\n' + (rows.join('\n') || 'Пока нет') + '\n\n/promo add КОД star|spins N ЛИМИТ');
+      return;
+    }
+    if (act === 'del') { await env.DB.prepare('DELETE FROM promos WHERE code = ?').bind(String(args[1] || '').toUpperCase()).run(); await say('✅ Удалён'); return; }
+    if (act === 'add') {
+      const code = String(args[1] || '').toUpperCase(), kind = String(args[2] || '').toLowerCase() === 'spins' ? 'spins' : String(args[2] || '').toLowerCase().startsWith('star') ? 'star' : null;
+      const amt = Math.round(+args[3]), uses = Math.round(+args[4]);
+      if (!/^[A-Z0-9_]{3,20}$/.test(code) || !kind || !(amt > 0 && amt <= 1e7) || !(uses > 0 && uses <= 1e6)) { await say('Формат: /promo add КОД star|spins N ЛИМИТ (код: A–Z, 0–9, _)'); return; }
+      await env.DB.prepare('INSERT INTO promos (code, kind, amount, uses, ts) VALUES (?, ?, ?, ?, ?) ON CONFLICT(code) DO UPDATE SET kind = excluded.kind, amount = excluded.amount, uses = excluded.uses').bind(code, kind, amt, uses, Date.now()).run();
+      await say(`🎟 Промокод <code>${code}</code>: ${kind === 'spins' ? nf(amt) + ' прокруток' : nf(amt) + ' ⭐'}, ${uses} активаций.\nИгроки вводят в боте: <code>/code ${code}</code>`);
+      return;
+    }
+    await say('Формат: /promo add|del|list');
+  }
+}
+
+// Игрок вводит /code КОД в боте
+export async function adminCode(d, m) {
+  const { env, tg } = d;
+  const reply = (text) => tg(env, 'sendMessage', { chat_id: m.chat.id, parse_mode: 'HTML', text });
+  if (!env.DB) return;
+  await d.ensure(env);
+  const uid = String(m.from && m.from.id);
+  const code = String(m.text.trim().split(/\s+/)[1] || '').toUpperCase();
+  if (!/^[A-Z0-9_]{3,20}$/.test(code)) { await reply('Отправь код так: <code>/code КОД</code>'); return; }
+  if (await env.DB.prepare('SELECT 1 AS x FROM bans WHERE id = ?').bind(uid).first()) return;
+  const p = await env.DB.prepare('SELECT kind, amount, uses FROM promos WHERE code = ?').bind(code).first();
+  if (!p || p.uses <= 0) { await reply('Такого промокода нет или он закончился'); return; }
+  const had = await env.DB.prepare('SELECT 1 AS x FROM players WHERE id = ?').bind(uid).first();
+  if (!had) { await reply('Сначала открой игру, потом вводи код'); return; }
+  const used = await env.DB.prepare('INSERT OR IGNORE INTO promo_used (code, id) VALUES (?, ?)').bind(code, uid).run();
+  if (!(used && used.meta && used.meta.changes)) { await reply('Ты уже активировал этот код'); return; }
+  const dec = await env.DB.prepare('UPDATE promos SET uses = uses - 1 WHERE code = ? AND uses > 0').bind(code).run();
+  if (!(dec && dec.meta && dec.meta.changes)) { await env.DB.prepare('DELETE FROM promo_used WHERE code = ? AND id = ?').bind(code, uid).run(); await reply('Промокод закончился'); return; }
+  const u = await env.DB.prepare('SELECT uname FROM players WHERE id = ?').bind(uid).first();
+  if (p.kind === 'spins') await d.runAct(env, uid, u && u.uname, true, 'admFree', [p.amount], null, false);
+  else await d.runAct(env, uid, u && u.uname, true, 'admGrant', ['star:' + p.amount], null, false);
+  await reply(`🎉 Промокод принят: +${p.kind === 'spins' ? nf(p.amount) + ' прокруток' : nf(p.amount) + ' ⭐'}`);
 }

@@ -20,6 +20,8 @@ test('1000 прокруток, продажи и сохранения не па�
     const r = run(S, 'spinRoll');
     assert.ok(!r.res.err, 'spinRoll: ' + r.res.err);
     run(S, i % 3 ? 'sellPending' : 'keepPending');
+    if (S.pending) run(S, 'sellPending'); // коллекция может быть полной
+    assert.ok(S.coll.length <= 50, 'лимит коллекции');
     if (S.coll.length > 40) run(S, 'sellBulk');
   }
   assert.ok(S.spins >= 1000);
@@ -187,4 +189,51 @@ test('настройки: шансы, цена прокрутки, словар�
   assert.deepEqual(back.tiers.map((t) => t.w), base.tiers.map((t) => t.w));
   assert.equal(E.poolWords('words').includes('fox'), true);
   assert.equal(E.poolWords('words').includes('zzqux'), false);
+});
+
+test('бонус прокрутки: множитель выпадает, цена ника умножается, распределение разумное', () => {
+  const S = E.fresh(); S.yuz = 1e9;
+  const cnt = {}; let withBonus = 0;
+  for (let i = 0; i < 4000; i++) {
+    run(S, 'spinRoll');
+    const r = S.pending;
+    assert.ok([1, 1.5, 2, 3, 5, 10, 25, 100].includes(r.k), 'k=' + r.k);
+    cnt[r.k] = (cnt[r.k] || 0) + 1; if (r.k > 1) withBonus++;
+    run(S, 'sellPending');
+  }
+  assert.ok(withBonus > 1500 && withBonus < 2500, 'бонус примерно в половине прокруток: ' + withBonus);
+  assert.ok(cnt[1] > cnt[2] && cnt[2] > cnt[10], 'чем больше множитель, тем реже');
+});
+
+test('лимит коллекции: 50 ников, дальше нельзя оставлять', () => {
+  const S = E.fresh(); S.yuz = 1e9;
+  for (let i = 0; i < 50; i++) S.coll.push({ u: 'nick' + i, tier: 'common', base: 3, ts: 1 });
+  run(S, 'spinRoll');
+  const before = S.pending.u;
+  const r = run(S, 'keepPending');
+  assert.equal(r.res.err, 'full');
+  assert.equal(S.coll.length, 50);
+  assert.equal(S.pending.u, before, 'ник остаётся на выбор: продать');
+  run(S, 'sellPending');
+  assert.equal(S.pending, null);
+});
+
+test('рефералы: награды в звёздах, прокрутках и никах, без TON', () => {
+  const S = E.fresh(); const y0 = S.yuz, f0 = S.free || 0;
+  const r = run(S, 'refsApply', [{ total: 10, act: 10, list: [], inviter: null }], { internal: true });
+  assert.equal(S.refPaid, 10);
+  assert.equal(S.yuz - y0, 1500 + 5000);
+  assert.equal(S.free - f0, 5 + 10);
+  assert.equal(S.coll.filter((x) => x.tier === 'epic').length, 1);
+  assert.equal(S.coll.filter((x) => x.tier === 'legend').length, 1);
+  assert.ok(!S.ton, 'TON за друзей больше не выдаётся');
+  const again = run(S, 'refsApply', [{ total: 10, act: 10, list: [], inviter: null }], { internal: true });
+  assert.equal(S.yuz - y0, 6500, 'повторно не платит');
+});
+
+test('экономика: возврат при продаже всего ≈ 75–90% от цены прокрутки', () => {
+  const S = E.fresh(); S.yuz = 1e12; const y0 = S.yuz; let n = 60000;
+  for (let i = 0; i < n; i++) { run(S, 'spinRoll'); run(S, 'sellPending'); }
+  const rtp = (S.yuz - y0 + n * 100) / (n * 100);
+  assert.ok(rtp > 0.7 && rtp < 0.95, 'RTP ' + rtp.toFixed(3));
 });
