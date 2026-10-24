@@ -1,6 +1,6 @@
 // Бот «Юзерок: Рулетка» + сервер экономики (Cloudflare Workers + D1). Движок игры лежит в engine.js
 import { createEngine } from './engine.js';
-import { adminMessage, adminCallback } from './botadmin.js';
+import { adminMessage, adminCallback, adminCode, gameCfg } from './botadmin.js';
 const E = createEngine();
 const GAME_URL = 'https://tun3l1k.github.io/roulette/';
 const KEYBOARD = { inline_keyboard: [[{ text: '🎰 Играть', web_app: { url: GAME_URL } }]] };
@@ -76,6 +76,9 @@ async function ensure(env) {
     env.DB.prepare('CREATE TABLE IF NOT EXISTS stats (id TEXT PRIMARY KEY, spins INTEGER)'),
     env.DB.prepare('CREATE TABLE IF NOT EXISTS referrals (invitee TEXT PRIMARY KEY, inviter TEXT, name TEXT, ts INTEGER)'),
     env.DB.prepare('CREATE TABLE IF NOT EXISTS config (k TEXT PRIMARY KEY, v TEXT)'),
+    env.DB.prepare('CREATE TABLE IF NOT EXISTS bans (id TEXT PRIMARY KEY, reason TEXT, ts INTEGER)'),
+    env.DB.prepare('CREATE TABLE IF NOT EXISTS promos (code TEXT PRIMARY KEY, kind TEXT, amount REAL, uses INTEGER, ts INTEGER)'),
+    env.DB.prepare('CREATE TABLE IF NOT EXISTS promo_used (code TEXT, id TEXT, PRIMARY KEY (code, id))'),
     env.DB.prepare('CREATE TABLE IF NOT EXISTS inbox (id INTEGER PRIMARY KEY AUTOINCREMENT, to_id TEXT, from_name TEXT, kind TEXT, payload TEXT, ts INTEGER)'),
   ]);
   for (const sql of ['ALTER TABLE players ADD COLUMN ver INTEGER DEFAULT 0', 'ALTER TABLE players ADD COLUMN uname TEXT']) {
@@ -112,6 +115,11 @@ async function registerRef(env, inviter, invitee, name) {
 const REF_NEED = 3; // сколько прокруток нужно другу, чтобы считаться активным
 const isAdmin = (env, uid) => !!uid && String(env.ADMIN_IDS || '').split(',').map((x) => x.trim()).includes(String(uid));
 
+async function readNotice(env) {
+  const r = await env.DB.prepare("SELECT v FROM config WHERE k = 'notice'").first();
+  return r && r.v ? String(r.v).slice(0, 400) : '';
+}
+
 async function readMaint(env) {
   const rows = await env.DB.prepare("SELECT k, v FROM config WHERE k IN ('maint','maint_msg')").all();
   const m = {};
@@ -144,6 +152,7 @@ async function runAct(env, uid, uname, adm, fn, args, prefs, internal) {
     const before = snapKeys(state);
     const ib = await env.DB.prepare('SELECT id, from_name, kind, payload FROM inbox WHERE to_id = ? ORDER BY id LIMIT 30').bind(uid).all();
     const items = (ib.results || []).map((r) => ({ id: r.id, from: r.from_name, k: r.kind, p: JSON.parse(r.payload) }));
+    E.setConfig(await gameCfg(env));
     const out = E.run(state, fn, args, { adm, internal, inbox: items });
     const raw = JSON.stringify(out.S);
     if (raw.length > 400000) throw new Error('state too large');
@@ -180,7 +189,7 @@ async function api(request, env, url) {
     await ensure(env);
     const m = await readMaint(env);
     const u = body.initData ? await verify(String(body.initData), env.BOT_TOKEN) : null;
-    return json({ ok: true, maint: m.maint, msg: m.msg, admin: isAdmin(env, u), cfg: !!String(env.ADMIN_IDS || '').trim(), eng: true });
+    return json({ ok: true, maint: m.maint, msg: m.msg, admin: isAdmin(env, u), cfg: !!String(env.ADMIN_IDS || '').trim(), eng: true, gc: await gameCfg(env), notice: await readNotice(env) });
   }
   if (!env.DB) return json({ ok: false, err: 'no_db' }, 503);
   const uid = await verify(String(body.initData || ''), env.BOT_TOKEN);
@@ -198,6 +207,7 @@ async function api(request, env, url) {
   }
   const nm = userName(String(body.initData || ''));
   const adm = isAdmin(env, uid);
+  if (!adm && (await env.DB.prepare('SELECT 1 AS x FROM bans WHERE id = ?').bind(uid).first())) return json({ ok: false, err: 'banned' }, 403);
   if (url.pathname === '/api/load' || url.pathname === '/api/prefs' || url.pathname === '/api/save') {
     // /api/save остался для старых версий игры: принимает только настройки, экономику клиент менять не может
     const prefs = url.pathname === '/api/save' ? body.state : body.prefs;
@@ -263,7 +273,7 @@ export default {
     }
     let update;
     try { update = await request.json(); } catch (e) { return new Response('ok'); }
-    const deps = { env, tg, isAdmin, runAct, readMaint, ensure };
+    const deps = { env, tg, isAdmin, runAct, readMaint, ensure, E };
     if (update.callback_query) {
       try { await adminCallback(deps, update.callback_query); } catch (e) { console.log('admin cb', e && e.message); }
       return new Response('ok');
@@ -271,7 +281,17 @@ export default {
     const m = update.message;
     if (m && m.text) {
       const cmd = m.text.trim().split(/\s+/)[0].split('@')[0].toLowerCase();
-      if (/^\/(admin|stats|player|give|reset|maint)$/.test(cmd)) {
+      if (m.reply_to_message && /^💰 Кому и сколько/.test(m.reply_to_message.text || '')) {
+        const parts = m.text.trim().split(/\s+/);
+        let handled = false;
+        try { handled = await adminMessage(deps, { ...m, text: `/give ${parts[0] || ''} star ${parts[1] || ''}` }, '/give'); } catch (e) { console.log('admin give', e && e.message); }
+        if (handled) return new Response('ok');
+      }
+      if (cmd === '/code') {
+        try { await adminCode(deps, m); } catch (e) { console.log('code', e && e.message); }
+        return new Response('ok');
+      }
+      if (/^\/(admin|stats|player|give|take|free|nick|find|ban|unban|bans|notice|promo|reset|maint|chance|price|craftp|cost|pool|cfg)$/.test(cmd)) {
         let handled = false;
         try { handled = await adminMessage(deps, m, cmd); } catch (e) { console.log('admin', e && e.message); }
         if (handled) return new Response('ok');

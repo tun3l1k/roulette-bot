@@ -3,9 +3,104 @@ const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt
 const nf = (n) => Math.round(Number(n) || 0).toLocaleString('ru-RU').replace(/\u00a0/g, ' ');
 const DAY = 86400000;
 
+// ---- настройки игры (шансы, цены, словари): таблица config, ключ game ----
+let CFG = { at: 0, v: {} };
+export async function gameCfg(env, force) {
+  if (!env.DB) return {};
+  if (!force && Date.now() - CFG.at < 20000) return CFG.v;
+  try {
+    const r = await env.DB.prepare("SELECT v FROM config WHERE k = 'game'").first();
+    CFG = { at: Date.now(), v: r ? JSON.parse(r.v) : {} };
+  } catch (e) { CFG = { at: Date.now(), v: {} }; }
+  return CFG.v;
+}
+async function saveCfg(env, cfg) {
+  const raw = JSON.stringify(cfg);
+  if (raw.length > 60000) throw new Error('cfg too large');
+  await env.DB.prepare('INSERT INTO config (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v').bind('game', raw).run();
+  CFG = { at: Date.now(), v: cfg };
+}
+const TRU = { common: 'обыч', norm: 'необыч', rare: 'ред', epic: 'эпи', legend: 'легенд', mythic: 'миф', divine: 'бож' };
+function tierId(s) {
+  s = String(s || '').toLowerCase();
+  if (TRU[s]) return s;
+  return Object.keys(TRU).find((k) => s && (s === k || (s.length >= 3 && TRU[k].startsWith(s.slice(0, 3)) && s.startsWith(TRU[k].slice(0, 3))) )) || null;
+}
+const pct = (x) => (x >= 10 ? x.toFixed(1) : x >= 1 ? x.toFixed(2) : x.toFixed(3)).replace('.', ',');
+function chanceTable(E) {
+  const i = E.cfgInfo();
+  const rows = i.tiers.map((t) => `<code>${t.id.padEnd(6)}</code> ${t.name}: вес <b>${t.w}</b> = <b>${pct(t.pct)}%</b> · цена ${nf(t.rng[0])}–${nf(t.rng[1])} ⭐${t.craft ? ' · крафт ' + Math.round(t.craft * 100) + '%' : ''}`);
+  return `🎲 <b>Шансы и цены</b>\nПрокрутка: <b>${nf(i.cost)} ⭐</b>\n\n${rows.join('\n')}`;
+}
+const CFG_HELP = `\n\n/chance &lt;редкость&gt; &lt;вес&gt; — шанс (вес относительно суммы)
+/price &lt;редкость&gt; &lt;мин&gt; &lt;макс&gt; — базовая цена
+/craftp &lt;редкость&gt; &lt;%&gt; — шанс крафта
+/cost &lt;⭐&gt; — цена прокрутки
+/pool [список] add|del|show &lt;слова&gt; — словари ников
+/cfg reset — вернуть заводские значения
+Редкости: common norm rare epic legend mythic divine`;
+
+async function cfgMessage(d, cmd, args, say) {
+  const { env, E } = d;
+  const cfg = JSON.parse(JSON.stringify(await gameCfg(env, true)));
+  const apply = async () => { E.setConfig(cfg); await saveCfg(env, cfg); };
+  const show = async (head) => { E.setConfig(cfg); await say((head ? head + '\n\n' : '') + chanceTable(E)); };
+  if (cmd === '/chance') {
+    if (!args.length) { await show(); await say(CFG_HELP.trim()); return; }
+    const t = tierId(args[0]), v = parseFloat(String(args[1] || '').replace(',', '.'));
+    if (!t || !(v >= 0.001 && v <= 1000)) { await say('Формат: /chance &lt;редкость&gt; &lt;вес 0,001–1000&gt;'); return; }
+    cfg.w = { ...(cfg.w || {}), [t]: v }; await apply(); await show('✅ Шанс обновлён'); return;
+  }
+  if (cmd === '/price') {
+    const t = tierId(args[0]), lo = Math.round(+args[1]), hi = Math.round(+args[2]);
+    if (!t || !(lo >= 1) || !(hi >= lo) || hi > 1e7) { await say('Формат: /price &lt;редкость&gt; &lt;мин&gt; &lt;макс&gt;'); return; }
+    cfg.rng = { ...(cfg.rng || {}), [t]: [lo, hi] }; await apply(); await show('✅ Цена обновлена'); return;
+  }
+  if (cmd === '/craftp') {
+    const t = tierId(args[0]), v = parseFloat(String(args[1] || '').replace(',', '.'));
+    if (!t || t === 'divine' || !(v >= 0 && v <= 100)) { await say('Формат: /craftp &lt;редкость&gt; &lt;0–100&gt; (божественные не крафтятся)'); return; }
+    cfg.craft = { ...(cfg.craft || {}), [t]: v / 100 }; await apply(); await show('✅ Шанс крафта обновлён'); return;
+  }
+  if (cmd === '/cost') {
+    const v = Math.round(+args[0]);
+    if (!(v >= 1 && v <= 1e5)) { await say('Формат: /cost &lt;1–100000&gt;'); return; }
+    cfg.cost = v; await apply(); await show('✅ Цена прокрутки обновлена'); return;
+  }
+  if (cmd === '/pool') {
+    E.setConfig(cfg);
+    const info = E.cfgInfo().pools;
+    const name = String(args[0] || '').toLowerCase();
+    if (!name) { await say('📚 <b>Словари</b>\n\n' + info.map(([k, n]) => `<code>${k}</code> — ${n}`).join('\n') + '\n\n/pool &lt;имя&gt; add|del|show &lt;слова&gt;'); return; }
+    if (!info.some(([k]) => k === name)) { await say('Нет такого словаря. Доступны: ' + info.map(([k]) => k).join(', ')); return; }
+    const act = String(args[1] || 'show').toLowerCase();
+    const words = args.slice(2).map((x) => x.toLowerCase().replace(/^@/, '')).filter((x) => /^[a-z0-9_]{1,32}$/.test(x)).slice(0, 100);
+    if (act === 'show') { await say(`📚 <b>${name}</b> (${info.find(([k]) => k === name)[1]})\n${E.poolWords(name).slice(-80).map((w) => '<code>' + w + '</code>').join(' ')}`); return; }
+    if ((act !== 'add' && act !== 'del') || !words.length) { await say('Формат: /pool &lt;имя&gt; add|del &lt;слова через пробел&gt; (a–z, 0–9, _)'); return; }
+    const key = act === 'add' ? 'add' : 'del', other = act === 'add' ? 'del' : 'add';
+    cfg[key] = cfg[key] || {}; cfg[other] = cfg[other] || {};
+    cfg[key][name] = [...new Set([...(cfg[key][name] || []), ...words])];
+    cfg[other][name] = (cfg[other][name] || []).filter((w) => !words.includes(w));
+    await apply();
+    await say(`✅ ${act === 'add' ? 'Добавлено' : 'Убрано'}: ${words.map((w) => '<code>' + w + '</code>').join(' ')}\nВ словаре <code>${name}</code> теперь ${E.cfgInfo().pools.find(([k]) => k === name)[1]} слов.`);
+    return;
+  }
+  if (cmd === '/cfg') {
+    if (String(args[0] || '').toLowerCase() === 'reset') {
+      await say('⚠️ <b>Вернуть шансы, цены и словари к заводским?</b>', { inline_keyboard: [[{ text: '↩️ Да, сбросить', callback_data: 'c:reset' }, { text: 'Отмена', callback_data: 'a:menu' }]] });
+      return;
+    }
+    E.setConfig(cfg);
+    const raw = JSON.stringify(cfg);
+    await say(`⚙️ <b>Свои настройки</b>\n<pre>${esc(raw.length > 3000 ? raw.slice(0, 3000) + '…' : raw)}</pre>\n/cfg reset — сбросить`);
+    return;
+  }
+}
+
+
 const PANEL_KB = {
   inline_keyboard: [
     [{ text: '📊 Статистика', callback_data: 'a:stats' }, { text: '🏆 Топ игроков', callback_data: 'a:top' }],
+    [{ text: '💰 Выдать ⭐', callback_data: 'a:give' }, { text: '🎲 Шансы', callback_data: 'a:chance' }],
     [{ text: '🛠 Тех. работы', callback_data: 'a:maint' }, { text: '📖 Команды', callback_data: 'a:help' }],
   ],
 };
@@ -17,8 +112,17 @@ export const ADMIN_HELP = `🛡 <b>Админ-меню</b>
 /stats — статистика игры
 /player &lt;id|@ник&gt; — карточка игрока
 /give &lt;id|@ник&gt; star|ton &lt;сумма&gt; — выдать валюту
+/take &lt;id|@ник&gt; star|ton &lt;сумма&gt; — списать
+/free &lt;id|@ник&gt; &lt;N&gt; — бесплатные прокрутки
+/nick &lt;id|@ник&gt; &lt;редкость&gt; &lt;ник&gt; [бонус] — выдать ник
+/find &lt;ник&gt; — у кого лежит ник
+/ban &lt;id|@ник&gt; [причина], /unban, /bans — блокировки
+/promo add КОД star|spins N ЛИМИТ · del КОД · list — промокоды (игроки: /code КОД)
+/notice &lt;текст|off&gt; — объявление в игре
 /reset &lt;id|@ник&gt; — сбросить прогресс (с подтверждением)
-/maint on|off [текст] — тех. работы`;
+/maint on|off [текст] — тех. работы
+
+⚙️ <b>Настройка игры</b>${CFG_HELP}`;
 
 async function statsText(env, readMaint) {
   const now = Date.now();
@@ -124,6 +228,8 @@ export async function adminMessage(d, m, cmd) {
     });
     return true;
   }
+  if (['/take', '/free', '/nick', '/find', '/ban', '/unban', '/bans', '/notice', '/promo'].includes(cmd)) { await extraMessage(d, cmd, args, say); return true; }
+  if (['/chance', '/price', '/craftp', '/cost', '/pool', '/cfg'].includes(cmd)) { await cfgMessage(d, cmd, args, say); return true; }
   if (cmd === '/maint') {
     const a = String(args[0] || '').toLowerCase();
     if (a !== 'on' && a !== 'off') { const mt = await d.readMaint(env); await say(`🛠 Тех. работы: <b>${mt.maint ? 'включены' : 'выключены'}</b>\n/maint on|off [текст]`); return true; }
@@ -149,6 +255,16 @@ export async function adminCallback(d, cb) {
   else if (data === 'a:stats') await edit(await statsText(env, d.readMaint));
   else if (data === 'a:top') await edit(await topText(env));
   else if (data === 'a:help') await edit(ADMIN_HELP);
+  else if (data === 'a:give') {
+    await ans();
+    await tg(env, 'sendMessage', { chat_id: cb.message.chat.id, text: '💰 Кому и сколько ⭐ выдать?\nОтветь на это сообщение: @ник 5000 (или id 5000)', reply_markup: { force_reply: true, input_field_placeholder: '@ник 5000' } });
+    return;
+  }
+  else if (data === 'a:chance') { d.E.setConfig(await gameCfg(env, true)); await edit(chanceTable(d.E)); }
+  else if (data === 'c:reset') {
+    await saveCfg(env, {}); d.E.setConfig({});
+    await ans('Сброшено'); await edit('↩️ Настройки игры вернулись к заводским\n\n' + chanceTable(d.E)); return;
+  }
   else if (data === 'a:maint') {
     const mt = await d.readMaint(env);
     await edit(`🛠 Тех. работы: <b>${mt.maint ? 'включены' : 'выключены'}</b>`, {
@@ -171,4 +287,125 @@ export async function adminCallback(d, cb) {
     return;
   }
   await ans();
+}
+
+const TIER_IDS = ['common', 'norm', 'rare', 'epic', 'legend', 'mythic', 'divine'];
+async function targetRow(env, q) {
+  const id = await findId(env, q);
+  if (!id) return null;
+  const row = await env.DB.prepare('SELECT id, uname FROM players WHERE id = ?').bind(id).first();
+  return row || null;
+}
+const who = (r) => (r.uname ? '@' + esc(r.uname) : r.id);
+
+async function extraMessage(d, cmd, args, say) {
+  const { env } = d;
+  if (cmd === '/take') {
+    const t = await targetRow(env, args[0]);
+    const cur = String(args[1] || '').toLowerCase();
+    const kind = cur === 'ton' ? 'ton' : cur === 'star' || cur === 'stars' ? 'star' : null;
+    const amt = parseFloat(String(args[2] || '').replace(',', '.'));
+    if (!t || !kind || !(amt > 0) || amt > 1e9) { await say('Формат: /take &lt;id|@ник&gt; star|ton &lt;сумма&gt;'); return; }
+    await d.runAct(env, t.id, t.uname, true, 'admTake', [kind + ':' + amt], null, false);
+    await say(`✅ Списано <b>${kind === 'ton' ? amt + ' 💎' : nf(amt) + ' ⭐'}</b> у ${who(t)}`);
+    return;
+  }
+  if (cmd === '/free') {
+    const t = await targetRow(env, args[0]);
+    const n = Math.round(+args[1]);
+    if (!t || !(n > 0 && n <= 10000)) { await say('Формат: /free &lt;id|@ник&gt; &lt;1–10000&gt;'); return; }
+    await d.runAct(env, t.id, t.uname, true, 'admFree', [n], null, false);
+    await say(`✅ ${who(t)}: +${n} бесплатных прокруток`);
+    return;
+  }
+  if (cmd === '/nick') {
+    const t = await targetRow(env, args[0]);
+    const tr = tierId(args[1]), nm = String(args[2] || '').toLowerCase().replace(/^@/, '');
+    const k = args[3] ? +args[3] : 0;
+    if (!t || !tr || !/^[a-z0-9_]{1,32}$/.test(nm)) { await say('Формат: /nick &lt;id|@ник&gt; &lt;редкость&gt; &lt;ник&gt; [бонус 1–100]'); return; }
+    const r = await d.runAct(env, t.id, t.uname, true, 'admNick', [{ tier: tr, u: nm, k }], null, false);
+    const res = r.out.res;
+    await say(res && res.ok ? `✅ @${esc(nm)} (${tr}${res.r.k > 1 ? ', бонус ×' + res.r.k : ''}) выдан ${who(t)}` : res && res.err === 'dup' ? 'У игрока уже есть такой ник' : 'Не получилось выдать ник');
+    return;
+  }
+  if (cmd === '/find') {
+    const nm = String(args[0] || '').toLowerCase().replace(/^@/, '');
+    if (!/^[a-z0-9_]{1,32}$/.test(nm)) { await say('Формат: /find &lt;ник&gt;'); return; }
+    const r = await env.DB.prepare("SELECT id, uname FROM players WHERE state LIKE ? LIMIT 10").bind('%"u":"' + nm + '"%').all();
+    const rows = (r.results || []).map((x) => `• ${who(x)} · <code>${x.id}</code>`);
+    await say(rows.length ? `🔎 @${esc(nm)} лежит у:\n${rows.join('\n')}` : `@${esc(nm)} ни у кого не найден`);
+    return;
+  }
+  if (cmd === '/ban') {
+    const id = await findId(env, args[0]);
+    if (!id) { await say('Формат: /ban &lt;id|@ник&gt; [причина]'); return; }
+    if (d.isAdmin(env, id)) { await say('Админа банить нельзя'); return; }
+    await env.DB.prepare('INSERT INTO bans (id, reason, ts) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET reason = excluded.reason, ts = excluded.ts').bind(id, args.slice(1).join(' ').slice(0, 200), Date.now()).run();
+    await say(`⛔ Игрок <code>${id}</code> заблокирован`);
+    return;
+  }
+  if (cmd === '/unban') {
+    const id = await findId(env, args[0]);
+    if (!id) { await say('Формат: /unban &lt;id|@ник&gt;'); return; }
+    await env.DB.prepare('DELETE FROM bans WHERE id = ?').bind(id).run();
+    await say(`✅ Игрок <code>${id}</code> разблокирован`);
+    return;
+  }
+  if (cmd === '/bans') {
+    const r = await env.DB.prepare('SELECT b.id AS id, b.reason AS reason, p.uname AS uname FROM bans b LEFT JOIN players p ON p.id = b.id ORDER BY b.ts DESC LIMIT 30').all();
+    const rows = (r.results || []).map((x) => `• ${x.uname ? '@' + esc(x.uname) : x.id} <code>${x.id}</code>${x.reason ? ' — ' + esc(x.reason) : ''}`);
+    await say('⛔ <b>Блокировки</b>\n\n' + (rows.join('\n') || 'Пока никого'));
+    return;
+  }
+  if (cmd === '/notice') {
+    const text = args.join(' ').trim();
+    if (!text) { const r = await env.DB.prepare("SELECT v FROM config WHERE k = 'notice'").first(); await say(r && r.v ? '📢 Сейчас в игре:\n' + esc(r.v) : 'Объявления нет. /notice &lt;текст&gt; — показать, /notice off — убрать'); return; }
+    const off = text.toLowerCase() === 'off';
+    await env.DB.prepare('INSERT INTO config (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v').bind('notice', off ? '' : text.slice(0, 400)).run();
+    await say(off ? '✅ Объявление убрано' : '📢 Объявление опубликовано: игроки увидят его при входе');
+    return;
+  }
+  if (cmd === '/promo') {
+    const act = String(args[0] || '').toLowerCase();
+    if (act === 'list' || !act) {
+      const r = await env.DB.prepare('SELECT code, kind, amount, uses FROM promos ORDER BY ts DESC LIMIT 30').all();
+      const rows = (r.results || []).map((x) => `<code>${esc(x.code)}</code> — ${x.kind === 'spins' ? nf(x.amount) + ' прокруток' : nf(x.amount) + ' ⭐'}, осталось ${x.uses}`);
+      await say('🎟 <b>Промокоды</b>\n\n' + (rows.join('\n') || 'Пока нет') + '\n\n/promo add КОД star|spins N ЛИМИТ');
+      return;
+    }
+    if (act === 'del') { await env.DB.prepare('DELETE FROM promos WHERE code = ?').bind(String(args[1] || '').toUpperCase()).run(); await say('✅ Удалён'); return; }
+    if (act === 'add') {
+      const code = String(args[1] || '').toUpperCase(), kind = String(args[2] || '').toLowerCase() === 'spins' ? 'spins' : String(args[2] || '').toLowerCase().startsWith('star') ? 'star' : null;
+      const amt = Math.round(+args[3]), uses = Math.round(+args[4]);
+      if (!/^[A-Z0-9_]{3,20}$/.test(code) || !kind || !(amt > 0 && amt <= 1e7) || !(uses > 0 && uses <= 1e6)) { await say('Формат: /promo add КОД star|spins N ЛИМИТ (код: A–Z, 0–9, _)'); return; }
+      await env.DB.prepare('INSERT INTO promos (code, kind, amount, uses, ts) VALUES (?, ?, ?, ?, ?) ON CONFLICT(code) DO UPDATE SET kind = excluded.kind, amount = excluded.amount, uses = excluded.uses').bind(code, kind, amt, uses, Date.now()).run();
+      await say(`🎟 Промокод <code>${code}</code>: ${kind === 'spins' ? nf(amt) + ' прокруток' : nf(amt) + ' ⭐'}, ${uses} активаций.\nИгроки вводят в боте: <code>/code ${code}</code>`);
+      return;
+    }
+    await say('Формат: /promo add|del|list');
+  }
+}
+
+// Игрок вводит /code КОД в боте
+export async function adminCode(d, m) {
+  const { env, tg } = d;
+  const reply = (text) => tg(env, 'sendMessage', { chat_id: m.chat.id, parse_mode: 'HTML', text });
+  if (!env.DB) return;
+  await d.ensure(env);
+  const uid = String(m.from && m.from.id);
+  const code = String(m.text.trim().split(/\s+/)[1] || '').toUpperCase();
+  if (!/^[A-Z0-9_]{3,20}$/.test(code)) { await reply('Отправь код так: <code>/code КОД</code>'); return; }
+  if (await env.DB.prepare('SELECT 1 AS x FROM bans WHERE id = ?').bind(uid).first()) return;
+  const p = await env.DB.prepare('SELECT kind, amount, uses FROM promos WHERE code = ?').bind(code).first();
+  if (!p || p.uses <= 0) { await reply('Такого промокода нет или он закончился'); return; }
+  const had = await env.DB.prepare('SELECT 1 AS x FROM players WHERE id = ?').bind(uid).first();
+  if (!had) { await reply('Сначала открой игру, потом вводи код'); return; }
+  const used = await env.DB.prepare('INSERT OR IGNORE INTO promo_used (code, id) VALUES (?, ?)').bind(code, uid).run();
+  if (!(used && used.meta && used.meta.changes)) { await reply('Ты уже активировал этот код'); return; }
+  const dec = await env.DB.prepare('UPDATE promos SET uses = uses - 1 WHERE code = ? AND uses > 0').bind(code).run();
+  if (!(dec && dec.meta && dec.meta.changes)) { await env.DB.prepare('DELETE FROM promo_used WHERE code = ? AND id = ?').bind(code, uid).run(); await reply('Промокод закончился'); return; }
+  const u = await env.DB.prepare('SELECT uname FROM players WHERE id = ?').bind(uid).first();
+  if (p.kind === 'spins') await d.runAct(env, uid, u && u.uname, true, 'admFree', [p.amount], null, false);
+  else await d.runAct(env, uid, u && u.uname, true, 'admGrant', ['star:' + p.amount], null, false);
+  await reply(`🎉 Промокод принят: +${p.kind === 'spins' ? nf(p.amount) + ' прокруток' : nf(p.amount) + ' ⭐'}`);
 }

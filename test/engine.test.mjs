@@ -20,6 +20,8 @@ test('1000 прокруток, продажи и сохранения не па�
     const r = run(S, 'spinRoll');
     assert.ok(!r.res.err, 'spinRoll: ' + r.res.err);
     run(S, i % 3 ? 'sellPending' : 'keepPending');
+    if (S.pending) run(S, 'sellPending'); // коллекция может быть полной
+    assert.ok(S.coll.length <= 50, 'лимит коллекции');
     if (S.coll.length > 40) run(S, 'sellBulk');
   }
   assert.ok(S.spins >= 1000);
@@ -132,4 +134,106 @@ test('маркет и таймеры: сутки симуляции без ош�
     for (const l of (S.lots || []).filter((x) => !x.mine).slice(0, 2)) run(S, 'bid', [l.id]);
   }
   assert.ok(Array.isArray(S.lots));
+});
+
+test('крафт: успех повышает редкость, провал даёт ту же, ники сгорают', () => {
+  const tiers = ['common', 'norm', 'rare', 'epic', 'legend', 'mythic', 'divine'];
+  let wins = 0, loses = 0;
+  for (let n = 0; n < 400; n++) {
+    const S = E.fresh();
+    const t = tiers[n % 6];
+    S.coll = ['aaa1', 'bbb2', 'ccc3', 'keep'].map((u, i) => ({ u, tier: i < 3 ? t : 'rare', base: 5, ts: 1 }));
+    const r = run(S, 'craftRoll', [['aaa1', 'bbb2', 'ccc3']]).res;
+    assert.ok(r.ok, JSON.stringify(r));
+    assert.equal(S.coll.length, 2, 'три сгорели, один новый');
+    assert.ok(!S.coll.some((x) => ['aaa1', 'bbb2', 'ccc3'].includes(x.u)));
+    const want = r.win ? tiers[tiers.indexOf(t) + 1] : t;
+    assert.equal(r.r.tier, want);
+    r.win ? wins++ : loses++;
+  }
+  assert.ok(wins > 50 && loses > 50, 'и успехи, и провалы случаются: ' + wins + '/' + loses);
+});
+
+test('крафт: некорректные запросы отклоняются без потерь', () => {
+  const S = E.fresh();
+  S.coll = [{ u: 'a1', tier: 'common', base: 1 }, { u: 'b2', tier: 'common', base: 1 }, { u: 'c3', tier: 'rare', base: 30 }, { u: 'd4', tier: 'divine', base: 9000 }];
+  const before = JSON.stringify(S.coll);
+  assert.equal(run(S, 'craftRoll', [['a1', 'b2']]).res.err, 'arg');
+  assert.equal(run(S, 'craftRoll', [['a1', 'a1', 'b2']]).res.err, 'arg');
+  assert.equal(run(S, 'craftRoll', [['a1', 'b2', 'zz']]).res.err, 'item');
+  assert.equal(run(S, 'craftRoll', [['a1', 'b2', 'c3']]).res.err, 'tier');
+  S.coll.push({ u: 'e5', tier: 'divine', base: 9000 }, { u: 'f6', tier: 'divine', base: 9000 });
+  assert.equal(run(S, 'craftRoll', [['d4', 'e5', 'f6']]).res.err, 'max');
+  assert.equal(JSON.stringify(S.coll.slice(0, 4)), before);
+});
+
+test('настройки: шансы, цена прокрутки, словари применяются и сбрасываются', () => {
+  const base = E.cfgInfo();
+  assert.equal(base.cost, 100);
+  E.setConfig({ w: { divine: 50 }, rng: { rare: [100, 200] }, cost: 250, craft: { rare: 0.9 }, add: { words: ['zzqux'] }, del: { words: ['fox'] } });
+  const i = E.cfgInfo();
+  assert.equal(i.cost, 250);
+  assert.ok(i.tiers.find((t) => t.id === 'divine').pct > 20, 'божественные теперь частые');
+  assert.deepEqual(i.tiers.find((t) => t.id === 'rare').rng, [100, 200]);
+  assert.equal(i.tiers.find((t) => t.id === 'rare').craft, 0.9);
+  const w = E.poolWords('words');
+  assert.ok(w.includes('zzqux') && !w.includes('fox'));
+  const S = E.fresh(); S.yuz = 1e6;
+  const before = S.yuz; run(S, 'spinRoll'); assert.equal(before - S.yuz, 250, 'списывается новая цена');
+  // мусор отбрасывается
+  E.setConfig({ w: { rare: -5, epic: 'x' }, cost: 0, add: { words: ['Bad Word', '', 'ok_1'] } });
+  assert.ok(E.poolWords('words').includes('ok_1') && !E.poolWords('words').includes('Bad Word'));
+  assert.equal(E.cfgInfo().cost, 100);
+  E.setConfig({});
+  const back = E.cfgInfo();
+  assert.deepEqual(back.tiers.map((t) => t.w), base.tiers.map((t) => t.w));
+  assert.equal(E.poolWords('words').includes('fox'), true);
+  assert.equal(E.poolWords('words').includes('zzqux'), false);
+});
+
+test('бонус прокрутки: множитель выпадает, цена ника умножается, распределение разумное', () => {
+  const S = E.fresh(); S.yuz = 1e9;
+  const cnt = {}; let withBonus = 0;
+  for (let i = 0; i < 4000; i++) {
+    run(S, 'spinRoll');
+    const r = S.pending;
+    assert.ok([1, 1.5, 2, 3, 5, 10, 25, 100].includes(r.k), 'k=' + r.k);
+    cnt[r.k] = (cnt[r.k] || 0) + 1; if (r.k > 1) withBonus++;
+    run(S, 'sellPending');
+  }
+  assert.ok(withBonus > 1500 && withBonus < 2500, 'бонус примерно в половине прокруток: ' + withBonus);
+  assert.ok(cnt[1] > cnt[2] && cnt[2] > cnt[10], 'чем больше множитель, тем реже');
+});
+
+test('лимит коллекции: 50 ников, дальше нельзя оставлять', () => {
+  const S = E.fresh(); S.yuz = 1e9;
+  for (let i = 0; i < 50; i++) S.coll.push({ u: 'nick' + i, tier: 'common', base: 3, ts: 1 });
+  run(S, 'spinRoll');
+  const before = S.pending.u;
+  const r = run(S, 'keepPending');
+  assert.equal(r.res.err, 'full');
+  assert.equal(S.coll.length, 50);
+  assert.equal(S.pending.u, before, 'ник остаётся на выбор: продать');
+  run(S, 'sellPending');
+  assert.equal(S.pending, null);
+});
+
+test('рефералы: награды в звёздах, прокрутках и никах, без TON', () => {
+  const S = E.fresh(); const y0 = S.yuz, f0 = S.free || 0;
+  const r = run(S, 'refsApply', [{ total: 10, act: 10, list: [], inviter: null }], { internal: true });
+  assert.equal(S.refPaid, 10);
+  assert.equal(S.yuz - y0, 1500 + 5000);
+  assert.equal(S.free - f0, 5 + 10);
+  assert.equal(S.coll.filter((x) => x.tier === 'epic').length, 1);
+  assert.equal(S.coll.filter((x) => x.tier === 'legend').length, 1);
+  assert.ok(!S.ton, 'TON за друзей больше не выдаётся');
+  const again = run(S, 'refsApply', [{ total: 10, act: 10, list: [], inviter: null }], { internal: true });
+  assert.equal(S.yuz - y0, 6500, 'повторно не платит');
+});
+
+test('экономика: возврат при продаже всего ≈ 75–90% от цены прокрутки', () => {
+  const S = E.fresh(); S.yuz = 1e12; const y0 = S.yuz; let n = 60000;
+  for (let i = 0; i < n; i++) { run(S, 'spinRoll'); run(S, 'sellPending'); }
+  const rtp = (S.yuz - y0 + n * 100) / (n * 100);
+  assert.ok(rtp > 0.7 && rtp < 0.95, 'RTP ' + rtp.toFixed(3));
 });
