@@ -1,7 +1,7 @@
 // Бот «Юзерок: Рулетка» + сервер экономики (Cloudflare Workers + D1). Движок игры лежит в engine.js
 import { createEngine } from './engine.js';
 import { adminMessage, adminCallback, adminCode, gameCfg } from './botadmin.js';
-import { p2pRoute, P2P_SCHEMA } from './p2p.js';
+import { p2pRoute, P2P_SCHEMA, P2P_ALTER } from './p2p.js';
 const E = createEngine();
 const GAME_URL = 'https://tun3l1k.github.io/roulette/';
 const KEYBOARD = { inline_keyboard: [[{ text: '🎰 Играть', web_app: { url: GAME_URL } }]] };
@@ -69,6 +69,7 @@ async function verify(initData, token) {
   try { return String(JSON.parse(p.get('user')).id); } catch (e) { return null; }
 }
 
+let topCache = { at: 0, list: [] };
 let ready = false;
 async function ensure(env) {
   if (ready) return;
@@ -83,7 +84,7 @@ async function ensure(env) {
     env.DB.prepare('CREATE TABLE IF NOT EXISTS promo_used (code TEXT, id TEXT, PRIMARY KEY (code, id))'),
     env.DB.prepare('CREATE TABLE IF NOT EXISTS inbox (id INTEGER PRIMARY KEY AUTOINCREMENT, to_id TEXT, from_name TEXT, kind TEXT, payload TEXT, ts INTEGER)'),
   ]);
-  for (const sql of ['ALTER TABLE players ADD COLUMN ver INTEGER DEFAULT 0', 'ALTER TABLE players ADD COLUMN uname TEXT']) {
+  for (const sql of ['ALTER TABLE players ADD COLUMN ver INTEGER DEFAULT 0', 'ALTER TABLE players ADD COLUMN uname TEXT', ...P2P_ALTER]) {
     try { await env.DB.prepare(sql).run(); } catch (e) { /* колонка уже есть */ }
   }
   try { await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_uname ON players(uname)').run(); } catch (e) {}
@@ -227,7 +228,7 @@ async function api(request, env, url) {
   }
   if (url.pathname === '/api/send') {
     if (!adm && (await readMaint(env)).maint) return json({ ok: false, err: 'maint' }, 503);
-    const kind = 'nick'; // подарки убраны из игры: передаются только ники
+    const kind = body.kind === 'gift' ? 'gift' : 'nick';
     const to = String(body.to || '').replace(/^@/, '').toLowerCase();
     if (!/^[a-z0-9_]{5,32}$/.test(to)) return json({ ok: false, err: 'name' });
     const rcp = await env.DB.prepare('SELECT id FROM players WHERE uname = ?').bind(to).first();
@@ -246,6 +247,22 @@ async function api(request, env, url) {
     }
     const d = diffState(r.before, r.out.S);
     return json({ ok: true, patch: d.patch, del: d.del, msgs: r.out.msgs });
+  }
+  if (url.pathname === '/api/top') {
+    const cat = ['lvl', 'bal', 'col', 'spn', 'rar', 'bst'].includes(body.cat) ? body.cat : 'lvl';
+    if (!topCache.at || Date.now() - topCache.at > 60000) {
+      E.setConfig(await gameCfg(env));
+      const rows = await env.DB.prepare('SELECT id, state, uname FROM players ORDER BY sv DESC LIMIT 400').all();
+      const list = [];
+      for (const r of rows.results || []) {
+        try { list.push({ id: r.id, n: r.uname ? '@' + r.uname : 'Игрок', s: E.stats(JSON.parse(r.state)) }); } catch (e) { /* битое сохранение пропускаем */ }
+      }
+      topCache = { at: Date.now(), list };
+    }
+    const sorted = topCache.list.slice().sort((a, b) => b.s[cat] - a.s[cat]);
+    const at = sorted.findIndex((x) => x.id === uid);
+    return json({ ok: true, total: sorted.length, rank: at < 0 ? 0 : at + 1, mine: at < 0 ? 0 : sorted[at].s[cat],
+      top: sorted.slice(0, 15).map((x) => ({ n: x.n, v: x.s[cat], me: x.id === uid })) });
   }
   if (url.pathname.startsWith('/api/p2p/')) {
     const maint = !adm && (await readMaint(env)).maint;
@@ -287,17 +304,18 @@ export default {
     const m = update.message;
     if (m && m.text) {
       const cmd = m.text.trim().split(/\s+/)[0].split('@')[0].toLowerCase();
-      if (m.reply_to_message && /^💰 Кому и сколько/.test(m.reply_to_message.text || '')) {
+      if (m.reply_to_message && /^(💰|💎) Кому и сколько/.test(m.reply_to_message.text || '')) {
         const parts = m.text.trim().split(/\s+/);
+        const cur = /^💎/.test(m.reply_to_message.text) ? 'ton' : 'star';
         let handled = false;
-        try { handled = await adminMessage(deps, { ...m, text: `/give ${parts[0] || ''} star ${parts[1] || ''}` }, '/give'); } catch (e) { console.log('admin give', e && e.message); }
+        try { handled = await adminMessage(deps, { ...m, text: `/give ${parts[0] || ''} ${cur} ${parts[1] || ''}` }, '/give'); } catch (e) { console.log('admin give', e && e.message); }
         if (handled) return new Response('ok');
       }
       if (cmd === '/code') {
         try { await adminCode(deps, m); } catch (e) { console.log('code', e && e.message); }
         return new Response('ok');
       }
-      if (/^\/(admin|stats|player|give|take|free|nick|find|ban|unban|bans|notice|promo|reset|maint|chance|price|craftp|cost|pool|cfg)$/.test(cmd)) {
+      if (/^\/(admin|stats|player|give|giveall|market|dellot|take|free|nick|find|ban|unban|bans|notice|promo|reset|maint|chance|price|craftp|cost|pool|cfg)$/.test(cmd)) {
         let handled = false;
         try { handled = await adminMessage(deps, m, cmd); } catch (e) { console.log('admin', e && e.message); }
         if (handled) return new Response('ok');

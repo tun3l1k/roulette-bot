@@ -101,6 +101,8 @@ const PANEL_KB = {
   inline_keyboard: [
     [{ text: '📊 Статистика', callback_data: 'a:stats' }, { text: '🏆 Топ игроков', callback_data: 'a:top' }],
     [{ text: '💰 Выдать ⭐', callback_data: 'a:give' }, { text: '🎲 Шансы', callback_data: 'a:chance' }],
+    [{ text: '💎 Выдать TON', callback_data: 'a:giveton' }, { text: '🎁 Выдать всем', callback_data: 'a:giveall' }],
+    [{ text: '🏪 Маркет', callback_data: 'a:market' }, { text: '📢 Объявление', callback_data: 'a:notice' }],
     [{ text: '🛠 Тех. работы', callback_data: 'a:maint' }, { text: '📖 Команды', callback_data: 'a:help' }],
   ],
 };
@@ -112,12 +114,15 @@ export const ADMIN_HELP = `🛡 <b>Админ-меню</b>
 /stats — статистика игры
 /player &lt;id|@ник&gt; — карточка игрока
 /give &lt;id|@ник&gt; star|ton &lt;сумма&gt; — выдать валюту
+/giveall star|ton &lt;сумма&gt; — выдать всем игрокам (с подтверждением)
+/market — статистика маркета игроков
+/dellot &lt;номер&gt; — снять лот (ник/подарок вернётся продавцу, ставка покупателю)
 /take &lt;id|@ник&gt; star|ton &lt;сумма&gt; — списать
 /free &lt;id|@ник&gt; &lt;N&gt; — бесплатные прокрутки
 /nick &lt;id|@ник&gt; &lt;редкость&gt; &lt;ник&gt; [бонус] — выдать ник
 /find &lt;ник&gt; — у кого лежит ник
 /ban &lt;id|@ник&gt; [причина], /unban, /bans — блокировки
-/promo add КОД star|spins N ЛИМИТ · del КОД · list — промокоды (игроки: /code КОД)
+/promo add КОД star|ton|spins N ЛИМИТ · del КОД · list — промокоды (игроки: /code КОД)
 /notice &lt;текст|off&gt; — объявление в игре
 /reset &lt;id|@ник&gt; — сбросить прогресс (с подтверждением)
 /maint on|off [текст] — тех. работы
@@ -150,6 +155,21 @@ async function statsText(env, readMaint) {
 🛠 Тех. работы: <b>${m.maint ? 'включены' : 'выключены'}</b>`;
 }
 
+async function marketText(env) {
+  const q = (s) => env.DB.prepare(s).first();
+  const a = await q("SELECT COUNT(*) AS n, COALESCE(SUM(CASE WHEN mode = 'auction' THEN 1 ELSE 0 END),0) AS au, COALESCE(SUM(CASE WHEN COALESCE(kind,'nick') = 'gift' THEN 1 ELSE 0 END),0) AS gf FROM listings WHERE status = 'active'");
+  const s = await q("SELECT COUNT(*) AS n, COALESCE(SUM(CASE WHEN COALESCE(cc,'star') = 'star' THEN COALESCE(NULLIF(bid,0), price) ELSE 0 END),0) AS stars, COALESCE(SUM(CASE WHEN cc = 'ton' THEN COALESCE(NULLIF(bid,0), price) ELSE 0 END),0) AS ton FROM listings WHERE status = 'sold'");
+  const last = await env.DB.prepare("SELECT id, u, seller_name, mode, price, bid, cc FROM listings WHERE status = 'active' ORDER BY id DESC LIMIT 8").all();
+  const rows = (last.results || []).map((x) => `#${x.id} ${esc(x.u)} · ${x.cc === 'ton' ? ((x.bid || x.price) / 1000) + ' 💎' : nf(x.bid || x.price) + ' ⭐'} · ${x.mode === 'auction' ? 'аукцион' : 'продажа'} · @${esc(x.seller_name || '?')}`);
+  return `🏪 <b>Маркет игроков</b>
+
+Активных лотов: <b>${nf(a.n)}</b> (аукционов ${nf(a.au)}, подарков ${nf(a.gf)})
+Продано всего: <b>${nf(s.n)}</b> · на ${nf(s.stars)} ⭐ и ${(s.ton / 1000).toFixed(2)} 💎
+Комиссия сервиса: 5%
+
+${rows.length ? '<b>Последние лоты</b>\n' + rows.join('\n') + '\n\nСнять лот: /dellot &lt;номер&gt;' : 'Лотов пока нет'}`;
+}
+
 async function topText(env) {
   const r = await env.DB.prepare(
     `SELECT p.id AS id, p.uname AS u, COALESCE(s.spins,0) AS sp, json_extract(p.state,'$.yuz') AS y
@@ -180,6 +200,7 @@ async function playerText(env, id) {
 
 ⭐ ${nf(S.yuz)} · 💎 ${(Number(S.ton) || 0).toFixed(2)}
 🎰 Прокруток: ${nf(r.sp)}
+🎁 Подарков: ${(S.gf || []).length}
 🗂 Ников: ${(S.coll || []).length}${best ? ' · лучший @' + esc(best.u) : ''}
 🕒 Был: ${new Date(r.sv).toISOString().replace('T', ' ').slice(0, 16)} UTC`;
 }
@@ -228,6 +249,31 @@ export async function adminMessage(d, m, cmd) {
     });
     return true;
   }
+  if (cmd === '/giveall') {
+    const cur = String(args[0] || '').toLowerCase();
+    const kind = cur === 'ton' ? 'ton' : cur === 'star' || cur === 'stars' ? 'star' : null;
+    const amt = parseFloat(String(args[1] || '').replace(',', '.'));
+    if (!kind || !(amt > 0) || amt > (kind === 'ton' ? 100 : 1e6)) { await say('Формат: /giveall star|ton &lt;сумма&gt; (до 1 000 000 ⭐ или 100 💎)'); return true; }
+    const n = await env.DB.prepare('SELECT COUNT(*) AS n FROM players').first();
+    await say(`⚠️ <b>Выдать всем (${nf(n.n)} игроков) по ${kind === 'ton' ? amt + ' 💎' : nf(amt) + ' ⭐'}?</b>`, {
+      inline_keyboard: [[{ text: '✅ Да, выдать', callback_data: `g:${kind}:${amt}` }, { text: 'Отмена', callback_data: 'a:menu' }]],
+    });
+    return true;
+  }
+  if (cmd === '/market') { await say(await marketText(env)); return true; }
+  if (cmd === '/dellot') {
+    const id = Math.round(+args[0]);
+    const l = id > 0 && (await env.DB.prepare("SELECT * FROM listings WHERE id = ? AND status = 'active'").bind(id).first());
+    if (!l) { await say('Активный лот не найден. Формат: /dellot &lt;номер&gt;'); return true; }
+    const c = await env.DB.prepare("UPDATE listings SET status = 'cancelled' WHERE id = ? AND status = 'active'").bind(id).run();
+    if (!(c && c.meta && c.meta.changes)) { await say('Лот уже закрыт'); return true; }
+    const ins = (to, kind, payload) => env.DB.prepare('INSERT INTO inbox (to_id, from_name, kind, payload, ts) VALUES (?, ?, ?, ?, ?)').bind(to, 'админ', kind, JSON.stringify(payload), Date.now());
+    const batch = [ins(l.seller, l.kind === 'gift' ? 'gift' : 'nick', { ...JSON.parse(l.nick), note: 'Лот снят администратором: предмет вернулся к тебе' })];
+    if (l.bidder && l.bid > 0) batch.push(ins(l.bidder, 'cash', { amount: l.bid, cc: l.cc === 'ton' ? 'ton' : 'star', note: 'Лот снят администратором: ставка возвращена' }));
+    await env.DB.batch(batch);
+    await say(`✅ Лот #${id} (${esc(l.u)}) снят. Продавцу вернули предмет${l.bidder ? ', покупателю ставку' : ''}.`);
+    return true;
+  }
   if (['/take', '/free', '/nick', '/find', '/ban', '/unban', '/bans', '/notice', '/promo'].includes(cmd)) { await extraMessage(d, cmd, args, say); return true; }
   if (['/chance', '/price', '/craftp', '/cost', '/pool', '/cfg'].includes(cmd)) { await cfgMessage(d, cmd, args, say); return true; }
   if (cmd === '/maint') {
@@ -258,6 +304,24 @@ export async function adminCallback(d, cb) {
   else if (data === 'a:give') {
     await ans();
     await tg(env, 'sendMessage', { chat_id: cb.message.chat.id, text: '💰 Кому и сколько ⭐ выдать?\nОтветь на это сообщение: @ник 5000 (или id 5000)', reply_markup: { force_reply: true, input_field_placeholder: '@ник 5000' } });
+    return;
+  }
+  else if (data === 'a:giveton') {
+    await ans();
+    await tg(env, 'sendMessage', { chat_id: cb.message.chat.id, text: '💎 Кому и сколько TON выдать?\nОтветь на это сообщение: @ник 0.5 (или id 0.5)', reply_markup: { force_reply: true, input_field_placeholder: '@ник 0.5' } });
+    return;
+  }
+  else if (data === 'a:giveall') { await edit('🎁 <b>Выдать всем игрокам</b>\n\nКоманда: <code>/giveall star 1000</code> или <code>/giveall ton 0.1</code>\nДеньги придут при следующем входе игрока в игру.', BACK_KB); }
+  else if (data === 'a:notice') { await edit('📢 <b>Объявление в игре</b>\n\n<code>/notice текст</code> — показать всем при входе\n<code>/notice off</code> — убрать', BACK_KB); }
+  else if (data === 'a:market') { await edit(await marketText(env), BACK_KB); }
+  else if (/^g:(star|ton):[0-9.]{1,12}$/.test(data)) {
+    const [, kind, raw] = data.split(':'), amt = parseFloat(raw);
+    if (!(amt > 0)) { await ans('Неверная сумма'); return; }
+    const unit = kind === 'ton' ? Math.round(amt * 1000) : Math.round(amt);
+    const note = '🎁 Подарок от админа: +' + (kind === 'ton' ? amt + ' TON' : nf(amt) + ' ⭐');
+    const r = await env.DB.prepare("INSERT INTO inbox (to_id, from_name, kind, payload, ts) SELECT id, 'админ', 'cash', ?, ? FROM players").bind(JSON.stringify({ amount: unit, cc: kind === 'ton' ? 'ton' : 'star', note }), Date.now()).run();
+    await ans('Отправлено');
+    await edit(`✅ Выдано всем игрокам: <b>${kind === 'ton' ? amt + ' 💎' : nf(amt) + ' ⭐'}</b> (${(r && r.meta && r.meta.changes) || 0} чел.). Получат при следующем входе.`);
     return;
   }
   else if (data === 'a:chance') { d.E.setConfig(await gameCfg(env, true)); await edit(chanceTable(d.E)); }
@@ -369,17 +433,17 @@ async function extraMessage(d, cmd, args, say) {
     const act = String(args[0] || '').toLowerCase();
     if (act === 'list' || !act) {
       const r = await env.DB.prepare('SELECT code, kind, amount, uses FROM promos ORDER BY ts DESC LIMIT 30').all();
-      const rows = (r.results || []).map((x) => `<code>${esc(x.code)}</code> — ${x.kind === 'spins' ? nf(x.amount) + ' прокруток' : nf(x.amount) + ' ⭐'}, осталось ${x.uses}`);
+      const rows = (r.results || []).map((x) => `<code>${esc(x.code)}</code> — ${x.kind === 'spins' ? nf(x.amount) + ' прокруток' : x.kind === 'ton' ? x.amount + ' 💎' : nf(x.amount) + ' ⭐'}, осталось ${x.uses}`);
       await say('🎟 <b>Промокоды</b>\n\n' + (rows.join('\n') || 'Пока нет') + '\n\n/promo add КОД star|spins N ЛИМИТ');
       return;
     }
     if (act === 'del') { await env.DB.prepare('DELETE FROM promos WHERE code = ?').bind(String(args[1] || '').toUpperCase()).run(); await say('✅ Удалён'); return; }
     if (act === 'add') {
-      const code = String(args[1] || '').toUpperCase(), kind = String(args[2] || '').toLowerCase() === 'spins' ? 'spins' : String(args[2] || '').toLowerCase().startsWith('star') ? 'star' : null;
-      const amt = Math.round(+args[3]), uses = Math.round(+args[4]);
-      if (!/^[A-Z0-9_]{3,20}$/.test(code) || !kind || !(amt > 0 && amt <= 1e7) || !(uses > 0 && uses <= 1e6)) { await say('Формат: /promo add КОД star|spins N ЛИМИТ (код: A–Z, 0–9, _)'); return; }
+      const code = String(args[1] || '').toUpperCase(), kind = String(args[2] || '').toLowerCase() === 'spins' ? 'spins' : String(args[2] || '').toLowerCase().startsWith('star') ? 'star' : String(args[2] || '').toLowerCase() === 'ton' ? 'ton' : null;
+      const amt = kind === 'ton' ? parseFloat(String(args[3]).replace(',', '.')) : Math.round(+args[3]), uses = Math.round(+args[4]);
+      if (!/^[A-Z0-9_]{3,20}$/.test(code) || !kind || !(amt > 0 && amt <= (kind === 'ton' ? 100 : 1e7)) || !(uses > 0 && uses <= 1e6)) { await say('Формат: /promo add КОД star|spins N ЛИМИТ (код: A–Z, 0–9, _)'); return; }
       await env.DB.prepare('INSERT INTO promos (code, kind, amount, uses, ts) VALUES (?, ?, ?, ?, ?) ON CONFLICT(code) DO UPDATE SET kind = excluded.kind, amount = excluded.amount, uses = excluded.uses').bind(code, kind, amt, uses, Date.now()).run();
-      await say(`🎟 Промокод <code>${code}</code>: ${kind === 'spins' ? nf(amt) + ' прокруток' : nf(amt) + ' ⭐'}, ${uses} активаций.\nИгроки вводят в боте: <code>/code ${code}</code>`);
+      await say(`🎟 Промокод <code>${code}</code>: ${kind === 'spins' ? nf(amt) + ' прокруток' : kind === 'ton' ? amt + ' 💎' : nf(amt) + ' ⭐'}, ${uses} активаций.\nИгроки вводят в боте: <code>/code ${code}</code>`);
       return;
     }
     await say('Формат: /promo add|del|list');
@@ -406,6 +470,6 @@ export async function adminCode(d, m) {
   if (!(dec && dec.meta && dec.meta.changes)) { await env.DB.prepare('DELETE FROM promo_used WHERE code = ? AND id = ?').bind(code, uid).run(); await reply('Промокод закончился'); return; }
   const u = await env.DB.prepare('SELECT uname FROM players WHERE id = ?').bind(uid).first();
   if (p.kind === 'spins') await d.runAct(env, uid, u && u.uname, true, 'admFree', [p.amount], null, false);
-  else await d.runAct(env, uid, u && u.uname, true, 'admGrant', ['star:' + p.amount], null, false);
-  await reply(`🎉 Промокод принят: +${p.kind === 'spins' ? nf(p.amount) + ' прокруток' : nf(p.amount) + ' ⭐'}`);
+  else await d.runAct(env, uid, u && u.uname, true, 'admGrant', [(p.kind === 'ton' ? 'ton:' : 'star:') + p.amount], null, false);
+  await reply(`🎉 Промокод принят: +${p.kind === 'spins' ? nf(p.amount) + ' прокруток' : p.kind === 'ton' ? p.amount + ' 💎' : nf(p.amount) + ' ⭐'}`);
 }

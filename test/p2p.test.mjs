@@ -126,3 +126,81 @@ test('ежедневный вход и уровень: награды начис
   assert.equal(b.res.err, 'done');
   assert.equal((await bal(61)).yuz, 200);
 });
+
+async function giftPlayer(id, name, ton, gf, yuz = 0) {
+  await player(id, name, yuz, []);
+  const row = await env.DB.prepare('SELECT state FROM players WHERE id = ?').bind(String(id)).first();
+  const st = JSON.parse(row.state);
+  st.ton = ton; st.gf = gf;
+  await env.DB.prepare('UPDATE players SET state = ? WHERE id = ?').bind(JSON.stringify(st), String(id)).run();
+}
+
+test('подарок за TON: выставить, купить, комиссия 5% в TON', async () => {
+  await giftPlayer(71, 'gseller', 0, [{ g: 'plush-pepe', n: 'g1', ts: 1 }]);
+  await giftPlayer(72, 'gbuyer', 2, []);
+  let j = await api(71, 'gseller', '/api/p2p/list', { kind: 'gift', u: 'g1', mode: 'fixed', price: 1500, dur: 3600 }); // 1,5 TON
+  assert.ok(j.ok, JSON.stringify(j));
+  assert.equal((await bal(71)).gf.length, 0);
+  const lot = (await api(72, 'gbuyer', '/api/p2p/browse', { kind: 'gift' })).list[0];
+  assert.equal(lot.kind, 'gift');
+  assert.equal(lot.cc, 'ton');
+  assert.equal(lot.g, 'plush-pepe');
+  assert.equal((await api(72, 'gbuyer', '/api/p2p/browse', { kind: 'nick' })).list.filter((x) => x.kind === 'gift').length, 0);
+  const b = await api(72, 'gbuyer', '/api/p2p/buy', { id: lot.id });
+  assert.ok(b.ok, JSON.stringify(b));
+  const s2 = await bal(72);
+  assert.equal(s2.ton, 0.5);
+  assert.equal(s2.gf[0].g, 'plush-pepe');
+  assert.equal((await bal(71)).ton, 1.425);
+});
+
+test('аукцион подарка за TON: перебитая ставка возвращается в TON', async () => {
+  await giftPlayer(81, 'gauc', 0, [{ g: 'hex-pot', n: 'h1', ts: 1 }]);
+  await giftPlayer(82, 'gbidA', 3, []);
+  await giftPlayer(83, 'gbidB', 3, []);
+  await api(81, 'gauc', '/api/p2p/list', { kind: 'gift', u: 'h1', mode: 'auction', price: 1000, dur: 3600 });
+  const lot = (await api(82, 'gbidA', '/api/p2p/browse', { kind: 'gift', q: 'hex' })).list[0];
+  assert.ok((await api(82, 'gbidA', '/api/p2p/bid', { id: lot.id, amount: 1000 })).ok);
+  assert.equal((await bal(82)).ton, 2);
+  assert.ok((await api(83, 'gbidB', '/api/p2p/bid', { id: lot.id, amount: 1100 })).ok);
+  assert.equal((await bal(82)).ton, 3);
+  assert.equal((await api(83, 'gbidB', '/api/p2p/bid', { id: lot.id, amount: 1500 })).err, 'top');
+  await env.DB.prepare('UPDATE listings SET end_at = ? WHERE id = ?').bind(Date.now() - 1, lot.id).run();
+  await api(83, 'gbidB', '/api/p2p/browse', {});
+  assert.equal((await bal(83)).gf[0].g, 'hex-pot');
+  assert.equal((await bal(81)).ton, 1.045); // 1,1 − 5%
+});
+
+test('подарок: отмена лота и передача другу через /api/send', async () => {
+  await giftPlayer(91, 'gsend', 0, [{ g: 'ion-gem', n: 'i1', ts: 1 }, { g: 'candy-cane', n: 'c1', ts: 2 }]);
+  await giftPlayer(92, 'gfriend', 0, []);
+  await api(91, 'gsend', '/api/p2p/list', { kind: 'gift', u: 'i1', mode: 'fixed', price: 900, dur: 3600 });
+  const mine = (await api(91, 'gsend', '/api/p2p/mine')).list[0];
+  assert.ok((await api(91, 'gsend', '/api/p2p/cancel', { id: mine.id })).ok);
+  assert.equal((await bal(91)).gf.length, 2);
+  const s = await api(91, 'gsend', '/api/send', { kind: 'gift', id: 'c1', to: 'gfriend' });
+  assert.ok(s.ok, JSON.stringify(s));
+  assert.equal((await bal(91)).gf.length, 1);
+  assert.equal((await bal(92)).gf[0].g, 'candy-cane');
+});
+
+test('покупка подарков в магазине закрыта (раздел в разработке)', async () => {
+  await giftPlayer(95, 'shopper', 1, []);
+  const r = await api(95, 'shopper', '/api/act', { fn: 'buyGift', args: ['ion-gem'] });
+  assert.equal(r.res.err, 'closed');
+  const st = await bal(95);
+  assert.equal(st.ton, 1);
+  assert.equal((st.gf || []).length, 0);
+});
+
+test('рейтинг: только реальные игроки, место считается по таблице', async () => {
+  await player(101, 'topone', 9e9, []);
+  await player(102, 'toptwo', 5, []);
+  const r = await api(102, 'toptwo', '/api/top', { cat: 'bal' });
+  assert.ok(r.ok);
+  assert.equal(r.top[0].n, '@topone');
+  assert.ok(r.top.every((x) => !/crypto_king|neo_wolf/.test(x.n)));
+  assert.ok(r.rank > 1);
+  assert.equal(r.mine, 5);
+  assert.equal((await api(101, 'topone', '/api/top', { cat: 'bal' })).rank, 1);
+});
