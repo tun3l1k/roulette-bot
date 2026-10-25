@@ -55,7 +55,7 @@ function esc(t){return String(t).replace(/[&<>"']/g,function(c){return {'&':'&am
 function fm(m){return String(Math.round(m*10)/10).replace('.',',')}
 function dt(ts){var d=new Date(ts);return ('0'+d.getDate()).slice(-2)+'.'+('0'+(d.getMonth()+1)).slice(-2)+' '+('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2)}
 function dk(d){return d.getFullYear()+'-'+(d.getMonth()+1)+'-'+d.getDate()}
-function tleft(ms){var t=Math.max(0,Math.ceil(ms/1000));return Math.floor(t/60)+':'+('0'+t%60).slice(-2)}
+function tleft(ms){var t=Math.max(0,Math.ceil(ms/1000));if(t>=86400)return Math.floor(t/86400)+' д '+Math.floor(t%86400/3600)+' ч';if(t>=3600)return Math.floor(t/3600)+' ч '+Math.floor(t%3600/60)+' мин';return Math.floor(t/60)+':'+('0'+t%60).slice(-2)}
 
 // Словари ников. Чем короче и «дороже» слово, тем выше редкость, в которой оно выпадает.
 var NW=function(s){return s.split(' ')};
