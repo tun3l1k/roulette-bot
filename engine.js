@@ -145,6 +145,7 @@ function initState(){S.coll=S.coll||[];S.hist=S.hist||[];S.since=S.since||Date.n
  if(!S.best){var b=null;S.coll.concat(S.rare,S.hist).forEach(function(c){if(!b||worth(c)>worth(b))b=c});if(b)noteBest(b)}
  if(S.autoKeep===false&&!S.autoTags)S.autoTags=[];if(!S.bl)S.bl={y:S.yuz,t:S.ton||0}}
 function resetAll(){if(!ADM)return{err:'forbidden'};var keep={};PREFK.forEach(function(k){if(S[k]!==undefined)keep[k]=S[k]});S=defState();Object.keys(keep).forEach(function(k){S[k]=keep[k]});initState();cur=null;return{ok:1}}
+function resetMe(){var keep={};PREFK.concat(['prem','lg','freeDay']).forEach(function(k){if(S[k]!==undefined)keep[k]=S[k]});S=defState();Object.keys(keep).forEach(function(k){S[k]=keep[k]});initState();cur=null;save();return{ok:1}}
 function spinRoll(){if(S.pending)return{err:'pending'};var fr=S.free>0;if(!fr&&S.yuz<COST)return{err:'poor'};
  if(fr)S.free--;else{S.yuz-=COST;led('Прокрутка')}
  var t=pickTier(),r={u:build(t.id),tier:t.id,base:baseFor(t.id),k:rollBonus(),odds:oddsOf(t),ts:Date.now()};
@@ -429,31 +430,35 @@ function build(id){var r=Math.random();switch(id){
   return rnd(FRAG_M);
  default:return rnd(DIVINE)}}
 // Бонус прокрутки: после ника крутится «барабан» множителей, цена ника умножается на выпавший
-var REVL=false;
+var REVL=false,SKIP=false,STm=0,RTm=0,SPF=null;
+function skipNow(){if(SKIP)return;SKIP=true;if(STm){clearTimeout(STm);STm=0;if(SPF)SPF()}else if(REVL&&RTm){clearTimeout(RTm);RTm=0;if(typeof RVT=='function')RVT()}}
+var RVT=null;
 function countPrice(from,to,ms,cb){var el=$('hprice'),t0=Date.now();if(!el){cb();return}
- (function f(){var p=Math.min(1,(Date.now()-t0)/ms),e=1-Math.pow(1-p,3);el.textContent='+'+money(from+(to-from)*e);if(p<1)requestAnimationFrame(f);else cb()})()}
+ (function f(){var p=SKIP?1:Math.min(1,(Date.now()-t0)/ms),e=1-Math.pow(1-p,3);el.textContent='+'+money(from+(to-from)*e);if(p<1)requestAnimationFrame(f);else cb()})()}
 function reveal(r,cb){var hb=$('hbonus');if(!hb||S.anim===false){cb();return}
  var vals=BONUS.map(function(b){return b.k}),seq=[],n=12,i,k=bonusOf(r);for(i=0;i<n;i++)seq.push(vals[ri(0,vals.length-1)]);seq.push(k);
  var st=0;hb.className='bonus spin';
  function show(v){hb.innerHTML='<b style="color:'+bonusColor(v)+'">×'+fm(v)+'</b><small>бонус прокрутки</small>'}
- function tick(){show(seq[st]);hap({type:'selection_change'});st++;if(st<seq.length)setTimeout(tick,60+Math.round(Math.pow(st/n,2.2)*240));else land()}
+ function tick(){if(SKIP&&st<seq.length-1)st=seq.length-1;show(seq[st]);if(!SKIP)hap({type:'selection_change'});st++;if(st<seq.length)RTm=setTimeout(tick,60+Math.round(Math.pow(st/n,2.2)*240));else{RTm=0;land()}}
+ RVT=tick;
  function land(){hb.className='bonus land'+(k>1?' win':'');if(k<=1){hb.innerHTML='<b style="color:var(--sub)">×1</b><small>без бонуса</small>'}
   var from=worthNoBonus(r),to=worth(r);if(k>=5)hap({type:'notification',notification_type:'success'});
-  countPrice(from,to,k>1?650:150,function(){setTimeout(cb,k>1?500:250)})}
+  countPrice(from,to,k>1?650:150,function(){RVT=null;if(SKIP)cb();else setTimeout(cb,k>1?500:250)})}
  tick()}
 function spin(){if(busy)return;
  if(S.pending)return toast('Сначала реши: продать или оставить');
  var fr=S.free>0;if(!fr&&S.yuz<COST)return toast('Не хватает звёзд: прокрутка стоит '+money(COST));
- busy=true;var P=SRV()?srvRun('spinRoll',[],{raw:true}):null;
+ SKIP=false;busy=true;paintHome();var P=SRV()?srvRun('spinRoll',[],{raw:true}):null;
  var D=S.anim===false?[70]:[55,60,68,80,96,116,140,170,205,245],n=0;
  function done(o){var rr=o&&o.res;var he=$('huname');if(he)he.style.opacity='1';
   if(!rr||rr.err||!rr.r){busy=false;paintHome();if(o&&o.err)toast('Нет связи с сервером');return}
   var r=rr.r;cur=r;REVL=S.anim!==false;paintHome(1);buzzEnd(r);(o.msgs||[]).forEach(function(m){toast(m)});
   reveal(r,function(){REVL=false;busy=false;paintHome();autoHandle(r)})}
- function finish(){if(P)P.then(done);else done({res:spinRoll(),msgs:[]})}
+ function finish(){STm=0;SPF=null;if(P)P.then(done);else done({res:spinRoll(),msgs:[]})}
+ SPF=finish;
  function step(){hap({type:'selection_change'});var he=$('huname');if(he){he.textContent='@'+pron(ri(5,9));he.style.opacity='.45';$('hrar').textContent='…';$('hrar').style.color='var(--sub)'}
-  if(++n>=D.length)finish();else setTimeout(step,D[n])}
- setTimeout(step,D[0])}
+  if(SKIP||++n>=D.length)finish();else STm=setTimeout(step,D[n])}
+ STm=setTimeout(step,D[0])}
 var AS=false,ASN=0,ASt=null;
 function autoLoop(){if(!AS)return;
  if(busy){ASt=setTimeout(autoLoop,300);return}
@@ -469,13 +474,13 @@ function toggleAuto(){if(AS){stopAuto('⏹ Автопрокрутка остан
 function stopAuto(m){AS=false;clearTimeout(ASt);if(m)toast(m);paintHome()}
 
 // Подарки за TON (картинки из репозитория nft-grade). Хранятся в S.gf = [{g, n, ts}], продаются игрокам на маркете.
-var GF_MAX=60,GF_SELL=.7;
+var GF_MAX=60,GF_SELL=.7,GIFTS_BUY=false; // покупка подарков закрыта: раздел в разработке (админ может покупать для проверки)
 var GIFTS=[['candy-cane','Candy Cane',.05],['jelly-bunny','Jelly Bunny',.06],['fresh-socks','Fresh Socks',.08],['ginger-cookie','Ginger Cookie',.1],['astral-shard','Astral Shard',.15],['love-potion','Love Potion',.2],['chill-flame','Chill Flame',.25],['spy-agaric','Spy Agaric',.3],['scared-cat','Scared Cat',.35],['durovs-cap','Durov’s Cap',.6],['witch-hat','Witch Hat',.8],['ion-gem','Ion Gem',1],['hex-pot','Hex Pot',1.2],['loot-bag','Loot Bag',2],['mini-oscar','Mini Oscar',3],['plush-pepe','Plush Pepe',5],['heroic-helmet','Heroic Helmet',8]];
 function gInfo(id){for(var i=0;i<GIFTS.length;i++)if(GIFTS[i][0]==id)return{id:id,name:GIFTS[i][1],ton:GIFTS[i][2],ix:i};return null}
 function gColor(ix){return ix>=14?'#ffd54a':ix>=9?'#a78bfa':ix>=4?'#2aabee':'#7f91a4'}
 function gfFull(){return (S.gf||[]).length>=GF_MAX}
 function gfNew(id){return{g:id,n:Date.now().toString(36)+Math.random().toString(36).slice(2,7),ts:Date.now()}}
-function buyGift(id){var g=gInfo(id);if(!g)return{err:'item'};if(gfFull()){toast('Слишком много подарков: '+GF_MAX+'/'+GF_MAX);return{err:'full'}}
+function buyGift(id){if(!GIFTS_BUY&&!ADM){toast('Покупка подарков временно недоступна');return{err:'closed'}}var g=gInfo(id);if(!g)return{err:'item'};if(gfFull()){toast('Слишком много подарков: '+GF_MAX+'/'+GF_MAX);return{err:'full'}}
  if((S.ton||0)<g.ton){toast('Не хватает TON');return{err:'poor'}}
  S.ton=r3((S.ton||0)-g.ton);S.gf=S.gf||[];S.gf.unshift(gfNew(id));led('Подарок '+g.name);save();toast('🎁 '+g.name+' куплен');return{ok:1}}
 function sellGift(n){var it=(S.gf||[]).filter(function(x){return x.n==n})[0];if(!it)return{err:'item'};var g=gInfo(it.g);if(!g)return{err:'item'};
@@ -554,7 +559,7 @@ var BOTN=BOTS.map(function(b){return b[0]});
 function giftSend(kind,id,to){if(kind!='nick'&&kind!='gift')return{err:'item'};var rec=takeForSend(kind,id);if(!rec)return{err:'item'};sendDone(kind,rec,to);return{ok:1,rec:rec}}
 function p2pTake(u,kind){kind=kind=='gift'?'gift':'nick';var rec=takeForSend(kind,String(u));return rec?{ok:1,rec:rec}:{err:'item'}}
 function giftRefund(kind,rec){if(kind=='nick')S.coll.unshift(rec);else if(kind=='gift'){S.gf=S.gf||[];S.gf.unshift(rec)}return{ok:1}}
-var ACT={keepPending:keepPending,sellPending:sellPending,sellOne:sellOne,sellBulk:sellBulk,claimTask:claimTask,claimChest:claimChest,buyLuck:buyLuck,exchangeTon:exchangeTon,buyGift:buyGift,sellGift:sellGift,autoResolve:autoResolve,admGrant:admGrant,admTake:admTake,admFree:admFree,admNick:admNick,tickNow:tickNow,resetAll:resetAll,craftRoll:craftRoll,claimLogin:claimLogin,spinRoll:spinRoll,wheelRoll:wheelRoll};
+var ACT={keepPending:keepPending,sellPending:sellPending,sellOne:sellOne,sellBulk:sellBulk,claimTask:claimTask,claimChest:claimChest,buyLuck:buyLuck,exchangeTon:exchangeTon,buyGift:buyGift,sellGift:sellGift,autoResolve:autoResolve,admGrant:admGrant,admTake:admTake,admFree:admFree,admNick:admNick,tickNow:tickNow,resetAll:resetAll,resetMe:resetMe,craftRoll:craftRoll,claimLogin:claimLogin,spinRoll:spinRoll,wheelRoll:wheelRoll};
 var INTERNAL={refsApply:refsApply,giftSend:giftSend,giftRefund:giftRefund,p2pTake:p2pTake,p2pPay:p2pPay,p2pRefund:p2pRefund};
 function catchUp(){var now=Date.now(),last=S.tkAt||now,n=Math.min(120,Math.floor((now-last)/1000));S.tkAt=now;for(var i=0;i<n;i++)auTick();if(!n)auTick()}
 return{

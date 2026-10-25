@@ -184,13 +184,13 @@ test('подарок: отмена лота и передача другу че�
   assert.equal((await bal(92)).gf[0].g, 'candy-cane');
 });
 
-test('покупка подарка в магазине идёт через /api/act', async () => {
+test('покупка подарков в магазине закрыта (раздел в разработке)', async () => {
   await giftPlayer(95, 'shopper', 1, []);
   const r = await api(95, 'shopper', '/api/act', { fn: 'buyGift', args: ['ion-gem'] });
-  assert.equal(r.res.ok, 1);
+  assert.equal(r.res.err, 'closed');
   const st = await bal(95);
-  assert.equal(st.ton, 0);
-  assert.equal(st.gf[0].g, 'ion-gem');
+  assert.equal(st.ton, 1);
+  assert.equal((st.gf || []).length, 0);
 });
 
 test('рейтинг: только реальные игроки, место считается по таблице', async () => {

@@ -304,17 +304,18 @@ export default {
     const m = update.message;
     if (m && m.text) {
       const cmd = m.text.trim().split(/\s+/)[0].split('@')[0].toLowerCase();
-      if (m.reply_to_message && /^💰 Кому и сколько/.test(m.reply_to_message.text || '')) {
+      if (m.reply_to_message && /^(💰|💎) Кому и сколько/.test(m.reply_to_message.text || '')) {
         const parts = m.text.trim().split(/\s+/);
+        const cur = /^💎/.test(m.reply_to_message.text) ? 'ton' : 'star';
         let handled = false;
-        try { handled = await adminMessage(deps, { ...m, text: `/give ${parts[0] || ''} star ${parts[1] || ''}` }, '/give'); } catch (e) { console.log('admin give', e && e.message); }
+        try { handled = await adminMessage(deps, { ...m, text: `/give ${parts[0] || ''} ${cur} ${parts[1] || ''}` }, '/give'); } catch (e) { console.log('admin give', e && e.message); }
         if (handled) return new Response('ok');
       }
       if (cmd === '/code') {
         try { await adminCode(deps, m); } catch (e) { console.log('code', e && e.message); }
         return new Response('ok');
       }
-      if (/^\/(admin|stats|player|give|take|free|nick|find|ban|unban|bans|notice|promo|reset|maint|chance|price|craftp|cost|pool|cfg)$/.test(cmd)) {
+      if (/^\/(admin|stats|player|give|giveall|market|dellot|take|free|nick|find|ban|unban|bans|notice|promo|reset|maint|chance|price|craftp|cost|pool|cfg)$/.test(cmd)) {
         let handled = false;
         try { handled = await adminMessage(deps, m, cmd); } catch (e) { console.log('admin', e && e.message); }
         if (handled) return new Response('ok');

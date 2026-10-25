@@ -174,3 +174,43 @@ test('админ: списание, фри-прокрутки, выдача ни
   await post({ message: { chat: { id: 1 }, from: { id: 1 }, text: '@petya 250', reply_to_message: { text: prompt.b.text } } });
   assert.match(last().b.text, /Выдано <b>250 ⭐/);
 });
+
+test('админ: TON ответом на кнопку, выдача всем, маркет, снятие лота, промокод в TON', async () => {
+  sent.length = 0;
+  await post({ callback_query: { id: 'c', from: { id: 1 }, data: 'a:giveton', message: { chat: { id: 1 }, message_id: 3 } } });
+  const ask = sent.find((x) => x.m === 'sendMessage');
+  assert.match(ask.b.text, /^💎 Кому и сколько TON/);
+  const { createEngine } = await import('../engine.js');
+  const E = createEngine();
+  const st = E.fresh();
+  await env.DB.prepare('INSERT OR REPLACE INTO players (id, sv, state, ver, uname) VALUES (?, ?, ?, 1, ?)').bind('700', Date.now(), JSON.stringify(st), 'tonuser').run();
+  await post({ message: { chat: { id: 1 }, from: { id: 1, first_name: 'A' }, text: '@tonuser 2.5', reply_to_message: { text: ask.b.text } } });
+  assert.match(sent.at(-1).b.text, /Выдано <b>2\.5 💎/);
+  assert.equal(JSON.parse((await env.DB.prepare("SELECT state FROM players WHERE id = '700'").first()).state).ton, 2.5);
+
+  await msg(1, '/giveall ton 0.1');
+  const kb = sent.at(-1).b.reply_markup.inline_keyboard[0][0];
+  assert.equal(kb.callback_data, 'g:ton:0.1');
+  await post({ callback_query: { id: 'c', from: { id: 1 }, data: kb.callback_data, message: { chat: { id: 1 }, message_id: 4 } } });
+  const row = await env.DB.prepare("SELECT payload FROM inbox WHERE to_id = '700' ORDER BY id DESC").first();
+  assert.deepEqual([JSON.parse(row.payload).amount, JSON.parse(row.payload).cc], [100, 'ton']);
+  await msg(99, '/giveall star 5');
+  assert.match(sent.at(-1).b.text, /Нажми кнопку/);
+
+  await env.DB.prepare("INSERT INTO listings (seller, seller_name, nick, u, tier, mode, price, bid, bidder, bids, end_at, status, created, cc, kind) VALUES ('700', 'tonuser', ?, 'wolfx', 'legend', 'auction', 50, 60, '701', 1, ?, 'active', 1, 'star', 'nick')")
+    .bind(JSON.stringify({ u: 'wolfx', tier: 'legend', base: 100, k: 1 }), Date.now() + 1e6).run();
+  const lot = await env.DB.prepare("SELECT id FROM listings WHERE u = 'wolfx'").first();
+  await msg(1, '/market');
+  assert.match(sent.at(-1).b.text, /Активных лотов: <b>1<\/b>/);
+  await msg(1, '/dellot ' + lot.id);
+  assert.match(sent.at(-1).b.text, /снят/);
+  assert.equal((await env.DB.prepare('SELECT status FROM listings WHERE id = ?').bind(lot.id).first()).status, 'cancelled');
+  const back = await env.DB.prepare("SELECT kind, payload FROM inbox WHERE to_id = '701'").first();
+  assert.equal(back.kind, 'cash');
+  assert.equal(JSON.parse(back.payload).amount, 60);
+
+  await msg(1, '/promo add TONCODE ton 0.3 5');
+  assert.match(sent.at(-1).b.text, /0\.3 💎/);
+  await post({ message: { chat: { id: 700 }, from: { id: 700, first_name: 'T' }, text: '/code TONCODE' } });
+  assert.match(sent.at(-1).b.text, /0\.3 💎/);
+});

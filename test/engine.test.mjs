@@ -75,10 +75,12 @@ test('старые подарки один раз превращаются в з
 
 test('подарки за TON: покупка, продажа за 70%, передача другу', () => {
   const S = E.fresh();
-  assert.equal(run(S, 'buyGift', ['candy-cane']).res.err, 'poor');
+  assert.equal(run(S, 'buyGift', ['candy-cane']).res.err, 'closed'); // покупка закрыта для игроков
+  const adm = { adm: true };
+  assert.equal(run(S, 'buyGift', ['candy-cane'], adm).res.err, 'poor');
   S.ton = 1;
-  assert.equal(run(S, 'buyGift', ['nope']).res.err, 'item');
-  assert.equal(run(S, 'buyGift', ['candy-cane']).res.ok, 1);
+  assert.equal(run(S, 'buyGift', ['nope'], adm).res.err, 'item');
+  assert.equal(run(S, 'buyGift', ['candy-cane'], adm).res.ok, 1);
   assert.equal(S.ton, 0.95);
   assert.equal(S.gf.length, 1);
   const n = S.gf[0].n;
