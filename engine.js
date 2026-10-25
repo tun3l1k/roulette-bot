@@ -141,7 +141,7 @@ function legacyGiftValue(g){var b=LGB[g.type]||50;if(g.up&&g.md&&g.bd&&g.sy){var
 function giftsToStars(){var L=S.gifts,sum=0;
  if(Array.isArray(L)&&L.length){L.forEach(function(g){sum+=legacyGiftValue(g)});S.yuz+=sum;led('Подарки заменены звёздами');toast('Подарки убраны из игры: вместо них '+money(sum))}
  delete S.gifts;delete S.glog;delete S.cl;delete S.gt}
-function initState(){S.coll=S.coll||[];S.hist=S.hist||[];S.since=S.since||Date.now();S.lots=S.lots||[];S.rare=S.rare||S.hist.filter(function(c){return ti(c.tier)>=2});giftsToStars();
+function initState(){S.coll=S.coll||[];S.hist=S.hist||[];S.since=S.since||Date.now();S.rare=S.rare||S.hist.filter(function(c){return ti(c.tier)>=2});giftsToStars();
  if(!S.best){var b=null;S.coll.concat(S.rare,S.hist).forEach(function(c){if(!b||worth(c)>worth(b))b=c});if(b)noteBest(b)}
  if(S.autoKeep===false&&!S.autoTags)S.autoTags=[];if(!S.bl)S.bl={y:S.yuz,t:S.ton||0}}
 function resetAll(){if(!ADM)return{err:'forbidden'};var keep={};PREFK.forEach(function(k){if(S[k]!==undefined)keep[k]=S[k]});S=defState();Object.keys(keep).forEach(function(k){S[k]=keep[k]});initState();cur=null;return{ok:1}}
@@ -171,19 +171,16 @@ function wheelRoll(){wheelSync();if(S.wt<=0)return{err:'no'};var tot=WHEEL.reduc
  led('Колесо фортуны');tq('wheel');
  var delta=(((-k*st-prev)%360)+360)%360+360*5,tgt=prev+delta+(Math.random()*st*.6-st*.3);S.wrot=((tgt%360)+360)%360;save();
  return{k:k,tgt:tgt,prize:prizeText(pr)}}
-function listLot(p){p=p||{};var c=S.coll.filter(function(x){return x.u==p.u})[0];if(!c)return{err:'item'};var price=+p.price,dur=+p.dur,cc=p.cc=='ton'?'ton':'star';
- if(!(price>0)||!(dur>=30&&dur<=3600))return{err:'arg'};if(cc=='ton'&&ti(c.tier)<3)return{err:'ton'};
- price=cc=='ton'?r3(price):Math.max(1,Math.round(price));S.coll=S.coll.filter(function(x){return x!==c});
- S.lots.push({id:Date.now()+''+ri(100,999),u:c.u,tier:c.tier,base:c.base,k:c.k,cc:cc,seller:'ты',mine:1,fx:p.fx?1:0,to:null,price:price,bidder:null,endsAt:Date.now()+dur*1000});
- tq('list1');save();toast('Лот выставлен');return{ok:1}}
 function tickNow(){auTick();return{ok:1}}
 function takeForSend(kind,id){var rec=null;
+ if(kind=='gift'){rec=(S.gf||[]).filter(function(x){return x.n==id})[0];if(!rec)return null;S.gf=S.gf.filter(function(x){return x!==rec});return rec}
  if(kind=='nick'){rec=S.coll.filter(function(x){return x.u==id})[0];if(!rec)return null;S.coll=S.coll.filter(function(x){return x!==rec})}
  return rec}
-function sendDone(kind,rec,to){toast('Ник @'+rec.u+' отправлен @'+to)}
+function sendDone(kind,rec,to){var gi=kind=='gift'?gInfo(rec.g):null;toast(gi?'Подарок '+gi.name+' отправлен @'+to:'Ник @'+rec.u+' отправлен @'+to)}
 function inboxReceive(items){items.forEach(function(it){var p=it.p;
  if(it.k=='nick'){S.coll.unshift(p);noteBest(p);toast(p.note||('Подарок от @'+it.from+': ник @'+p.u));delete p.note}
-  else if(it.k=='cash'){var a=Math.round(+p.amount)||0;if(a>0&&a<1e10){S.yuz+=a;led(p.note||'Сделка с игроком');toast(p.note||('+'+money(a)))}}})}
+  else if(it.k=='gift'){S.gf=S.gf||[];S.gf.unshift({g:p.g,n:p.n,ts:p.ts||Date.now()});var gi=gInfo(p.g);toast(p.note||('Подарок от @'+it.from+(gi?': '+gi.name:'')))}
+  else if(it.k=='cash'){var a=Math.round(+p.amount)||0;if(a>0&&a<1e10){if(p.cc=='ton')S.ton=r3((S.ton||0)+a/1000);else S.yuz+=a;led(p.note||'Сделка с игроком');toast(p.note||('+'+(p.cc=='ton'?tonF(a/1000)+' TON':money(a))))}}})}
 
 // Деньги и продажа: звёзды, TON, продажа ников
 function money(n){return fmt(Math.round(n))+' ⭐'}
@@ -388,85 +385,19 @@ function friendsHtml(){if(!cloudOn())return emp('users','Приглашения 
   ((d.list||[]).length?'<div class="sec">Твои друзья</div><div class="grp">'+d.list.map(function(f){var a=f.spins>=REF_NEED;return '<div class="go"><span>'+esc(f.name||'Игрок')+'</span><small style="color:'+(a?'#34c759':'var(--sub)')+'">'+(a?'активен ✓':'прокрутки '+Math.min(f.spins,REF_NEED)+'/'+REF_NEED)+'</small></div>'}).join('')+'</div>':'')+
   '<div class="foot">Ссылка работает для тех, кто ещё не играл. Награды за рубежи выдаются один раз.</div>'}
 
-// Маркет: аукцион, продажа, продажа пользователю, предложения
-function defPrice(){var w=worth({u:LU,tier:LT,base:LB,k:LK}),k=LM=='auc'?1.5:1.2;return LC=='ton'?Math.max(.002,r3(w/RATE*k)):Math.max(2,Math.round(w*k))}
-function minBid(l){if(l.cc=='ton')return l.bidder?r3(l.price+Math.max(.001,l.price*.1)):l.price;return l.bidder?l.price+Math.max(1,Math.ceil(l.price*.1)):l.price}
-function avatar(u,t,ix){return '<div class="mav" style="background:linear-gradient(135deg,'+t.color+','+t.color+'99)'+(ix>=3?';box-shadow:0 0 14px '+t.color+'88':'')+'">'+esc(u.charAt(0).toUpperCase())+'</div>'}
-function starVal(l){return l.cc=='ton'?l.price*RATE:l.price}
-function lotsFiltered(mode){var f=S.mf||{},q=(S.mq||'').toLowerCase(),L=(S.lots||[]).filter(function(x){return mode=='mine'?!!x.mine:(!x.mine&&(mode=='fix')==!!x.fx)});
- if(q)L=L.filter(function(l){return l.u.indexOf(q)>=0});
- if(mode!='mine'){if(f.cc&&f.cc!='all')L=L.filter(function(l){return l.cc==f.cc});if(f.t>=0)L=L.filter(function(l){return ti(l.tier)==f.t})}
- var so=f.s||'end';return L.sort(function(a,b){return so=='asc'?starVal(a)-starVal(b):so=='desc'?starVal(b)-starVal(a):a.endsAt-b.endsAt})}
+// Маркет: только реальные игроки (см. p2p.js). Здесь остались общие таймеры и переезд старых симулированных лотов.
 var SRCI='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l5 5"/></svg>';
-function mFilters(){var f=S.mf||{},cc=f.cc||'all',t=f.t===undefined?-1:f.t,so=f.s||'end',SL={end:'Скоро закончатся',asc:'Сначала дешёвые',desc:'Сначала дорогие'},md=S.mt||'auc',
- base=(S.lots||[]).filter(function(x){return !x.mine&&(md=='fix')==!!x.fx}),cnt={};base.forEach(function(l){var k=ti(l.tier);cnt[k]=(cnt[k]||0)+1});
- var act=cc!='all'||t>=0||!!S.mq;
- return '<div class="msearch">'+SRCI+'<input id="msq" placeholder="Поиск ника" value="'+esc(S.mq||'')+'" autocomplete="off" autocapitalize="off" spellcheck="false"></div>'+
-  '<div class="fchips"><button class="fc'+(cc=='all'?' on':'')+'" data-mf="cc:all">Все</button><button class="fc'+(cc=='star'?' on':'')+'" data-mf="cc:star">'+SI(16)+'</button><button class="fc'+(cc=='ton'?' on':'')+'" data-mf="cc:ton">'+TI(16)+'</button>'+
-  TIERS.map(function(tr,i){return '<button class="fc rc'+(t==i?' on':'')+'" data-mf="t:'+(t==i?-1:i)+'"><i class="rdt" style="background:'+tr.color+'"></i>'+(cnt[i]||0)+'</button>'}).join('')+
-  '<button class="fc" data-ms="1">'+SL[so]+'</button>'+(act?'<button class="fc" data-mf="reset:1">Сбросить</button>':'')+'</div>'}
-function lotStatus(l){if(l.mine)return l.fx?(l.to?'ждёт @'+esc(l.to):'ждёт покупателя'):(l.bidder?'есть ставка':'нет ставок');
- if(l.fx)return 'продажа';return l.bidder=='me'?'твоя ставка':(l.bidder?'есть ставки':'нет ставок')}
-function lotRow(l){var t=tier(l.tier),m=mult(l.u),k=bonusOf(l),left=l.endsAt-Date.now(),tg=m.parts.map(function(p){return p[0]}).join(', ');
- return '<button class="go frow" data-lot="'+l.id+'"><div class="fl"><div class="fn"><i>@</i>'+esc(l.u)+'</div><div class="fs"><span class="fst '+(l.fx?'sale':'auc')+(l.bidder=='me'?' me':'')+'">'+(l.mine?'мой · ':'')+lotStatus(l)+'</span><i class="rdt" style="background:'+t.color+'"></i>'+t.name+(tg?' · '+tg:'')+(k>1?' · <b style="color:'+bonusColor(k)+'">×'+fm(k)+'</b>':'')+'</div></div>'+
-  '<div class="fr"><div class="fp">'+cash(l.price,l.cc)+'</div><div class="ft tm'+(left<30000?' hot':'')+'" data-end="'+l.endsAt+'">'+tleft(left)+'</div></div></button>'}
-function lotSheet(id){var l=findLot(id);if(!l)return;var t=tier(l.tier),c={u:l.u,tier:l.tier,base:l.base,k:l.k},w=worth(c),o=document.createElement('div');o.className='ov';
- var act=l.mine?(l.bidder?'<div class="foot" style="margin:12px 0 0">Ставка уже есть — лот нельзя снять</div>':'<button class="pbtn gray" style="width:100%;margin-top:12px" data-nx="cancel">Снять с продажи</button>'):
-  l.fx?'<button class="pbtn" style="width:100%;margin-top:12px" data-nx="buy">Купить за '+cash(l.price,l.cc)+'</button>':
-  l.bidder=='me'?'<div class="foot" style="margin:12px 0 0">Твоя ставка — самая высокая</div>':'<button class="pbtn" style="width:100%;margin-top:12px" data-nx="bid">Сделать ставку · '+cash(minBid(l),l.cc)+'</button>';
- o.innerHTML='<div class="sh" style="text-align:left">'+nickHero(c,1)+'<div class="grp" style="margin-top:12px"><div class="go"><span>Статус</span><small>'+(l.fx?'Продажа':'Аукцион')+' · '+lotStatus(l)+'</small></div><div class="go"><span>'+(l.fx?'Цена':(l.bidder?'Текущая ставка':'Стартовая цена'))+'</span><small style="color:var(--text);font-weight:700">'+cash(l.price,l.cc)+'</small></div><div class="go"><span>Осталось</span><small class="tm" data-end="'+l.endsAt+'">'+tleft(l.endsAt-Date.now())+'</small></div><div class="go"><span>Оценка ника</span><small>'+money(w)+'</small></div><div class="go"><span>Продавец</span><small>'+(l.mine?'ты':'@'+esc(l.seller))+'</small></div></div>'+act+'<button class="plainbtn" data-nx="close">Закрыть</button></div>';
- o.addEventListener('click',function(e){var b2=e.target.closest('[data-nx]');if(b2||e.target===o){var v=b2?b2.getAttribute('data-nx'):'close';o.remove();
-  if(v=='bid')bid(id);else if(v=='buy')buyLot(id);else if(v=='cancel')cancelLot(id)}});document.body.appendChild(o)}
-function lotsHtml(mode){var L=lotsFiltered(mode);
- if(!L.length)return '<div class="empty">'+(mode=='mine'?'У тебя пока нет лотов<br>Выставь ник из коллекции':'Ничего не найдено<br>Измени фильтры или поиск')+'</div>';
- return '<div class="fhead"><span>Ник</span><span>Цена · осталось</span></div><div class="grp mlist ftable">'+L.map(lotRow).join('')+'</div>'}
-function offersHtml(){var O=S.offers||[];if(!O.length)return '';
- return '<div class="sec">Предложения тебе</div><div class="grp mlist">'+O.map(function(o){var t=tier(o.tier),m=mult(o.u),ix=ti(o.tier),left=o.endsAt-Date.now();
-  return '<div class="mrow"><div class="mleft">'+avatar(o.u,t,ix)+'<div class="mmid"><b>@'+o.u+'</b><div class="msub">'+t.icon+' '+t.name+(m.m>1?' · ×'+fm(m.m):'')+'</div><div class="mtags"><span class="tm" data-end="'+o.endsAt+'">'+tleft(left)+'</span>'+(o.cc=='ton'?'<span class="cb" style="background:#4f9bff">TON</span>':'')+'</div><div class="msub">от @'+esc(o.from)+' · лично тебе</div></div></div><div class="mright"><div class="mprice">'+cash(o.price,o.cc)+'</div><div class="mbt"><button class="pbtn sm" data-oacc="'+o.id+'">Принять</button><button class="pbtn sm gray" data-orej="'+o.id+'">Нет</button></div></div></div>'}).join('')+'</div>'}
-function botBonus(){var r=Math.random();return r<.7?1:r<.88?1.5:r<.96?2:r<.99?3:5}
-function newLot(fx){var t=TIERS[rnd([0,1,1,2,2,3,4])],u=build(t.id),bs=baseFor(t.id),bk=botBonus(),w=worth({u:u,tier:t.id,base:bs,k:bk}),tn=ti(t.id)>=3&&Math.random()<.4,k=fx?1.3:1.5;
- return{id:Date.now()+''+ri(100,999),u:u,tier:t.id,base:bs,k:bk,cc:tn?'ton':'star',fx:fx?1:0,seller:rnd(BOTN),price:tn?Math.max(.002,r3(w/RATE*k)):Math.max(2,Math.round(w*k)),bidder:null,endsAt:Date.now()+(fx?ri(180,600):ri(60,300))*1000}}
-function offerNew(){var t=TIERS[rnd([1,2,2,3,3,4])],u=build(t.id),bs=baseFor(t.id),bk=botBonus(),w=worth({u:u,tier:t.id,base:bs,k:bk}),tn=ti(t.id)>=3&&Math.random()<.3;
- return{id:Date.now()+''+ri(100,999),from:rnd(BOTN),u:u,tier:t.id,base:bs,k:bk,cc:tn?'ton':'star',price:tn?Math.max(.002,r3(w/RATE*.9)):Math.max(2,Math.round(w*.9)),endsAt:Date.now()+ri(180,360)*1000}}
-function findLot(id){return (S.lots||[]).filter(function(x){return x.id==id})[0]}
-function pay(cc,v,r){if(cc=='ton'){if((S.ton||0)<v)return false;S.ton=r3((S.ton||0)-v)}else{if(S.yuz<v)return false;S.yuz-=v}led(r||'Покупка');return true}
-function gain(cc,v,r){if(cc=='ton')S.ton=r3((S.ton||0)+v);else S.yuz+=v;led(r||'Доход')}
-function bid(id){var l=findLot(id);if(!l||l.mine||l.fx||l.bidder=='me')return;if(collFull())return toast('Коллекция заполнена: '+COLL_MAX+'/'+COLL_MAX);var mb=minBid(l);
- if(!pay(l.cc,mb,'Ставка на @'+l.u))return toast('Не хватает '+(l.cc=='ton'?'TON':'звёзд'));
- l.price=mb;l.bidder='me';tq('bid1');save();hap({type:'impact',impact_style:'light'});toast('Ставка принята: '+cash(mb,l.cc));draw()}
-function buyLot(id){var l=findLot(id);if(!l||l.mine||!l.fx)return;if(collFull())return toast('Коллекция заполнена: '+COLL_MAX+'/'+COLL_MAX);
- if(!pay(l.cc,l.price,'Покупка @'+l.u))return toast('Не хватает '+(l.cc=='ton'?'TON':'звёзд'));
- S.lots=S.lots.filter(function(x){return x!==l});var rec={u:l.u,tier:l.tier,base:l.base,k:l.k,odds:oddsOf(tier(l.tier)),ts:Date.now()};S.coll.unshift(rec);noteBest(rec);
- save();hap({type:'notification',notification_type:'success'});toast('🛒 Куплено @'+l.u+' · −'+cash(l.price,l.cc));draw()}
-function cancelLot(id){var l=findLot(id);if(!l||!l.mine||l.bidder)return;
- S.lots=S.lots.filter(function(x){return x!==l});S.coll.unshift({u:l.u,tier:l.tier,base:l.base,k:l.k,odds:oddsOf(tier(l.tier))});save();toast('Лот снят, ник вернулся в коллекцию');draw()}
-function acceptOffer(id){var o=(S.offers||[]).filter(function(x){return x.id==id})[0];if(!o)return;if(collFull())return toast('Коллекция заполнена: '+COLL_MAX+'/'+COLL_MAX);
- if(!pay(o.cc,o.price,'Покупка @'+o.u))return toast('Не хватает '+(o.cc=='ton'?'TON':'звёзд'));
- S.offers=S.offers.filter(function(x){return x!==o});var rec={u:o.u,tier:o.tier,base:o.base,k:o.k,odds:oddsOf(tier(o.tier)),ts:Date.now()};S.coll.unshift(rec);noteBest(rec);
- save();hap({type:'notification',notification_type:'success'});toast('🤝 Принято: @'+o.u+' · −'+cash(o.price,o.cc));draw()}
-function rejectOffer(id){S.offers=(S.offers||[]).filter(function(x){return x.id!=id});save();draw()}
-function auTick(){var now=Date.now(),ch=false;S.lots=S.lots||[];S.offers=S.offers||[];
- S.lots=S.lots.filter(function(l){if(l.endsAt>now)return true;ch=true;var rec={u:l.u,tier:l.tier,base:l.base,k:l.k,odds:oddsOf(tier(l.tier))};
-  if(l.mine){if(l.bidder){var g=l.cc=='ton'?r3(l.price*feeK()):Math.floor(l.price*feeK());gain(l.cc,g,'Продан лот @'+l.u);toast('💰 Лот продан: @'+l.u+' · +'+cash(g,l.cc))}else{S.coll.unshift(rec);toast('@'+l.u+' не продан, вернулся в коллекцию')}}
-  else if(l.bidder=='me'){S.coll.unshift(rec);noteBest(rec);toast('🏆 Ты выиграл @'+l.u)}
-  return false});
- S.lots.forEach(function(l){
-  if(l.mine&&l.fx){var cap=(l.cc=='ton'?worth(l)/RATE+.001:worth(l)+2)*(l.to?2:1.6);
-   if(l.price<=cap&&Math.random()<(l.to?.025:.04)){l.sold=1;var g2=l.cc=='ton'?r3(l.price*feeK()):Math.floor(l.price*feeK());gain(l.cc,g2,'Продан @'+l.u);toast('💰 '+(l.to?'@'+l.to:'Покупатель')+' купил @'+l.u+' · +'+cash(g2,l.cc));ch=true}return}
-  if(l.fx)return;
-  if(l.mine){if(Math.random()<.07&&l.price<(l.cc=='ton'?worth(l)/RATE*1.3+.001:worth(l)*4+4)){l.price=minBid(l);l.bidder='bot';ch=true}}
-  else if(Math.random()<.03){var mb=minBid(l);if(l.bidder=='me'){gain(l.cc,l.price,'Возврат ставки @'+l.u);toast('Тебя перебили: @'+l.u)}l.price=mb;l.bidder='bot';ch=true}});
- S.lots=S.lots.filter(function(l){return !l.sold});
- led('Операция');if(isPrem()&&S.freeDay!==dk(new Date())){S.freeDay=dk(new Date());S.free=(S.free||0)+1;toast('✨ Premium: бесплатная прокрутка дня');ch=true}
- var no=S.offers.length;S.offers=S.offers.filter(function(o){return o.endsAt>now});if(S.offers.length!=no)ch=true;
- if(S.offers.length<2&&Math.random()<.015){var o=offerNew();S.offers.push(o);ch=true}
- var nA=S.lots.filter(function(x){return !x.mine&&!x.fx}).length,nF=S.lots.filter(function(x){return !x.mine&&x.fx}).length;
- while(nA<4){S.lots.push(newLot(0));nA++;ch=true}while(nF<4){S.lots.push(newLot(1));nF++;ch=true}
- if(ch){save();if(scr=='market')draw();else if(scr=='home'&&!busy)paintHome()}
+function marketMigrate(){if(!S.lots&&!S.offers)return false;
+ (S.lots||[]).forEach(function(l){if(l.mine){S.coll.unshift({u:l.u,tier:l.tier,base:l.base,k:l.k,odds:oddsOf(tier(l.tier))});if(l.bidder&&l.cc=='star')S.yuz+=0}
+  else if(l.bidder=='me'){if(l.cc=='ton')S.ton=r3((S.ton||0)+l.price);else S.yuz+=l.price}});
+ delete S.lots;delete S.offers;delete S.mf;delete S.mq;save();return true}
+function auTick(){var ch=marketMigrate();
+ if(isPrem()&&S.freeDay!==dk(new Date())){S.freeDay=dk(new Date());S.free=(S.free||0)+1;toast('✨ Premium: бесплатная прокрутка дня');ch=true}
+ if(ch){save();if(scr=='home'&&!busy)paintHome()}
  tickTimers()}
 function tickTimers(){var now=Date.now();
  if(scr=='wheel'&&!WBUSY){var rdy=wheelReady()+':'+S.wt;if(WA_!==rdy){WA_=rdy;draw()}else{var wt=document.getElementById('wtimer');if(wt)wt.textContent=wheelLeft()}}
- if(scr=='market'){var q=document.querySelectorAll('[data-end]');for(var i=0;i<q.length;i++){var lf=q[i].getAttribute('data-end')-now;q[i].textContent=tleft(lf);q[i].classList.toggle('hot',lf<30000)}}}
+ if(scr=='market'||scr=='gifts'){var q=document.querySelectorAll('[data-end]');for(var i=0;i<q.length;i++){var lf=q[i].getAttribute('data-end')-now;q[i].textContent=tleft(lf);q[i].classList.toggle('hot',lf<30000)}}}
 
 // Ядро генератора: сборка ника и прокрутка
 function build(id){var r=Math.random();switch(id){
@@ -537,6 +468,19 @@ function toggleAuto(){if(AS){stopAuto('⏹ Автопрокрутка остан
  AS=true;ASN=0;paintHome();autoLoop()}
 function stopAuto(m){AS=false;clearTimeout(ASt);if(m)toast(m);paintHome()}
 
+// Подарки за TON (картинки из репозитория nft-grade). Хранятся в S.gf = [{g, n, ts}], продаются игрокам на маркете.
+var GF_MAX=60,GF_SELL=.7;
+var GIFTS=[['candy-cane','Candy Cane',.05],['jelly-bunny','Jelly Bunny',.06],['fresh-socks','Fresh Socks',.08],['ginger-cookie','Ginger Cookie',.1],['astral-shard','Astral Shard',.15],['love-potion','Love Potion',.2],['chill-flame','Chill Flame',.25],['spy-agaric','Spy Agaric',.3],['scared-cat','Scared Cat',.35],['durovs-cap','Durov’s Cap',.6],['witch-hat','Witch Hat',.8],['ion-gem','Ion Gem',1],['hex-pot','Hex Pot',1.2],['loot-bag','Loot Bag',2],['mini-oscar','Mini Oscar',3],['plush-pepe','Plush Pepe',5],['heroic-helmet','Heroic Helmet',8]];
+function gInfo(id){for(var i=0;i<GIFTS.length;i++)if(GIFTS[i][0]==id)return{id:id,name:GIFTS[i][1],ton:GIFTS[i][2],ix:i};return null}
+function gColor(ix){return ix>=14?'#ffd54a':ix>=9?'#a78bfa':ix>=4?'#2aabee':'#7f91a4'}
+function gfFull(){return (S.gf||[]).length>=GF_MAX}
+function gfNew(id){return{g:id,n:Date.now().toString(36)+Math.random().toString(36).slice(2,7),ts:Date.now()}}
+function buyGift(id){var g=gInfo(id);if(!g)return{err:'item'};if(gfFull()){toast('Слишком много подарков: '+GF_MAX+'/'+GF_MAX);return{err:'full'}}
+ if((S.ton||0)<g.ton){toast('Не хватает TON');return{err:'poor'}}
+ S.ton=r3((S.ton||0)-g.ton);S.gf=S.gf||[];S.gf.unshift(gfNew(id));led('Подарок '+g.name);save();toast('🎁 '+g.name+' куплен');return{ok:1}}
+function sellGift(n){var it=(S.gf||[]).filter(function(x){return x.n==n})[0];if(!it)return{err:'item'};var g=gInfo(it.g);if(!g)return{err:'item'};
+ var v=r3(g.ton*GF_SELL);S.gf=S.gf.filter(function(x){return x!==it});S.ton=r3((S.ton||0)+v);led('Продан подарок '+g.name);save();toast('Продано: '+g.name+' · +'+tonF(v)+' TON');return{ok:1,v:v}}
+
 // Ежедневный вход (серия 7 дней) и награда за новый уровень
 var LOGIN_R=[{s:200},{s:300,f:1},{s:500},{s:700,f:2},{s:1000},{s:1500,f:3},{s:3000,f:5,l:20}];
 function dayNum(tz){var o=Math.max(-840,Math.min(840,Math.round(+tz)||0));return Math.floor((Date.now()-o*60000)/86400000)}
@@ -559,8 +503,9 @@ function dailyHtml(){var tz=new Date().getTimezoneOffset(),i=loginInfo(tz),cyc=L
 function levelCheck(){var L=level();if(S.lvR===undefined){S.lvR=L;return}
  while(S.lvR<L&&S.lvR<500){S.lvR++;var st=50*S.lvR+50,fr=S.lvR%5==0?5:0;S.yuz+=st;if(fr)S.free=(S.free||0)+fr;led('Уровень '+S.lvR);toast('Уровень '+S.lvR+'! +'+money(st)+(fr?' и '+fr+' прокруток':''))}}
 // Сделки между игроками: деньги уходят в залог на сервере (p2pPay), возвращаются через p2pRefund или входящие «cash»
-function p2pPay(a,slot){a=Math.round(+a);if(!(a>0)||a>1e10)return{err:'arg'};if(slot&&collFull())return{err:'full'};if(S.yuz<a)return{err:'poor'};S.yuz-=a;led('Сделка с игроком');save();return{ok:1}}
-function p2pRefund(a){a=Math.round(+a);if(a>0&&a<1e10){S.yuz+=a;led('Возврат по сделке');save()}return{ok:1}}
+function p2pPay(a,slot,cc){a=Math.round(+a);if(!(a>0)||a>1e10)return{err:'arg'};if(slot=='gift'?gfFull():(slot&&collFull()))return{err:'full'};
+ if(cc=='ton'){if((S.ton||0)<a/1000-1e-9)return{err:'poor'};S.ton=r3((S.ton||0)-a/1000)}else{if(S.yuz<a)return{err:'poor'};S.yuz-=a}led('Сделка с игроком');save();return{ok:1}}
+function p2pRefund(a,cc){a=Math.round(+a);if(a>0&&a<1e10){if(cc=='ton')S.ton=r3((S.ton||0)+a/1000);else S.yuz+=a;led('Возврат по сделке');save()}return{ok:1}}
 
 // Крафт: 3 ника одной редкости → шанс получить ник редкостью выше
 var CRAFT_P=[.6,.55,.5,.45,.35,.25]; // шанс успеха для обычных…мифических; божественные не крафтятся
@@ -606,10 +551,10 @@ function craftGo(){if(CF.sel.length!=3)return;var us=CF.sel.slice();CF.sel=[];
 
 toast=function(m){MSGS.push(String(m))};
 var BOTN=BOTS.map(function(b){return b[0]});
-function giftSend(kind,id,to){if(kind!='nick')return{err:'item'};var rec=takeForSend(kind,id);if(!rec)return{err:'item'};sendDone(kind,rec,to);return{ok:1,rec:rec}}
-function p2pTake(u){var rec=takeForSend('nick',String(u));return rec?{ok:1,rec:rec}:{err:'item'}}
-function giftRefund(kind,rec){if(kind=='nick')S.coll.unshift(rec);return{ok:1}}
-var ACT={keepPending:keepPending,sellPending:sellPending,sellOne:sellOne,sellBulk:sellBulk,claimTask:claimTask,claimChest:claimChest,buyLuck:buyLuck,exchangeTon:exchangeTon,bid:bid,buyLot:buyLot,cancelLot:cancelLot,acceptOffer:acceptOffer,rejectOffer:rejectOffer,listLot:listLot,autoResolve:autoResolve,admGrant:admGrant,admTake:admTake,admFree:admFree,admNick:admNick,tickNow:tickNow,resetAll:resetAll,craftRoll:craftRoll,claimLogin:claimLogin,spinRoll:spinRoll,wheelRoll:wheelRoll};
+function giftSend(kind,id,to){if(kind!='nick'&&kind!='gift')return{err:'item'};var rec=takeForSend(kind,id);if(!rec)return{err:'item'};sendDone(kind,rec,to);return{ok:1,rec:rec}}
+function p2pTake(u,kind){kind=kind=='gift'?'gift':'nick';var rec=takeForSend(kind,String(u));return rec?{ok:1,rec:rec}:{err:'item'}}
+function giftRefund(kind,rec){if(kind=='nick')S.coll.unshift(rec);else if(kind=='gift'){S.gf=S.gf||[];S.gf.unshift(rec)}return{ok:1}}
+var ACT={keepPending:keepPending,sellPending:sellPending,sellOne:sellOne,sellBulk:sellBulk,claimTask:claimTask,claimChest:claimChest,buyLuck:buyLuck,exchangeTon:exchangeTon,buyGift:buyGift,sellGift:sellGift,autoResolve:autoResolve,admGrant:admGrant,admTake:admTake,admFree:admFree,admNick:admNick,tickNow:tickNow,resetAll:resetAll,craftRoll:craftRoll,claimLogin:claimLogin,spinRoll:spinRoll,wheelRoll:wheelRoll};
 var INTERNAL={refsApply:refsApply,giftSend:giftSend,giftRefund:giftRefund,p2pTake:p2pTake,p2pPay:p2pPay,p2pRefund:p2pRefund};
 function catchUp(){var now=Date.now(),last=S.tkAt||now,n=Math.min(120,Math.floor((now-last)/1000));S.tkAt=now;for(var i=0;i<n;i++)auTick();if(!n)auTick()}
 return{

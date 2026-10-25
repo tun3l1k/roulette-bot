@@ -1,7 +1,7 @@
 // Бот «Юзерок: Рулетка» + сервер экономики (Cloudflare Workers + D1). Движок игры лежит в engine.js
 import { createEngine } from './engine.js';
 import { adminMessage, adminCallback, adminCode, gameCfg } from './botadmin.js';
-import { p2pRoute, P2P_SCHEMA } from './p2p.js';
+import { p2pRoute, P2P_SCHEMA, P2P_ALTER } from './p2p.js';
 const E = createEngine();
 const GAME_URL = 'https://tun3l1k.github.io/roulette/';
 const KEYBOARD = { inline_keyboard: [[{ text: '🎰 Играть', web_app: { url: GAME_URL } }]] };
@@ -83,7 +83,7 @@ async function ensure(env) {
     env.DB.prepare('CREATE TABLE IF NOT EXISTS promo_used (code TEXT, id TEXT, PRIMARY KEY (code, id))'),
     env.DB.prepare('CREATE TABLE IF NOT EXISTS inbox (id INTEGER PRIMARY KEY AUTOINCREMENT, to_id TEXT, from_name TEXT, kind TEXT, payload TEXT, ts INTEGER)'),
   ]);
-  for (const sql of ['ALTER TABLE players ADD COLUMN ver INTEGER DEFAULT 0', 'ALTER TABLE players ADD COLUMN uname TEXT']) {
+  for (const sql of ['ALTER TABLE players ADD COLUMN ver INTEGER DEFAULT 0', 'ALTER TABLE players ADD COLUMN uname TEXT', ...P2P_ALTER]) {
     try { await env.DB.prepare(sql).run(); } catch (e) { /* колонка уже есть */ }
   }
   try { await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_uname ON players(uname)').run(); } catch (e) {}
@@ -227,7 +227,7 @@ async function api(request, env, url) {
   }
   if (url.pathname === '/api/send') {
     if (!adm && (await readMaint(env)).maint) return json({ ok: false, err: 'maint' }, 503);
-    const kind = 'nick'; // подарки убраны из игры: передаются только ники
+    const kind = body.kind === 'gift' ? 'gift' : 'nick';
     const to = String(body.to || '').replace(/^@/, '').toLowerCase();
     if (!/^[a-z0-9_]{5,32}$/.test(to)) return json({ ok: false, err: 'name' });
     const rcp = await env.DB.prepare('SELECT id FROM players WHERE uname = ?').bind(to).first();

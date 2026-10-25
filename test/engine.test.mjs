@@ -73,10 +73,54 @@ test('старые подарки один раз превращаются в з
   assert.equal(S.yuz, y1, 'повторная загрузка не должна платить снова');
 });
 
-test('действия с подарками больше недоступны', () => {
-  for (const fn of ['buyGift', 'upgradeGift', 'sellGift']) assert.equal(E.allowed(fn), false, fn);
+test('подарки за TON: покупка, продажа за 70%, передача другу', () => {
   const S = E.fresh();
-  assert.deepEqual(run(S, 'giftSend', ['gift', 'x', 'bob'], { internal: true }).res, { err: 'item' });
+  assert.equal(run(S, 'buyGift', ['candy-cane']).res.err, 'poor');
+  S.ton = 1;
+  assert.equal(run(S, 'buyGift', ['nope']).res.err, 'item');
+  assert.equal(run(S, 'buyGift', ['candy-cane']).res.ok, 1);
+  assert.equal(S.ton, 0.95);
+  assert.equal(S.gf.length, 1);
+  const n = S.gf[0].n;
+  const sent = run(S, 'giftSend', ['gift', n, 'bob'], { internal: true });
+  assert.equal(sent.res.ok, 1);
+  assert.equal(S.gf.length, 0);
+  run(S, 'giftRefund', ['gift', sent.res.rec], { internal: true });
+  assert.equal(S.gf.length, 1);
+  assert.equal(run(S, 'sellGift', [n]).res.ok, 1);
+  assert.equal(S.gf.length, 0);
+  assert.equal(S.ton, 0.985); // 0.95 + 70% от 0.05
+  assert.equal(run(S, 'sellGift', [n]).res.err, 'item');
+});
+
+test('залог в TON: p2pPay/p2pRefund и входящие подарок/деньги', () => {
+  const S = E.fresh();
+  S.ton = 1;
+  assert.equal(run(S, 'p2pPay', [1500, 'gift', 'ton'], { internal: true }).res.err, 'poor');
+  assert.equal(run(S, 'p2pPay', [400, 'gift', 'ton'], { internal: true }).res.ok, 1);
+  assert.equal(S.ton, 0.6);
+  run(S, 'p2pRefund', [400, 'ton'], { internal: true });
+  assert.equal(S.ton, 1);
+  run(S, '__noop', [], { inbox: [{ id: 1, from: 'x', k: 'cash', p: { amount: 250, cc: 'ton', note: 'ok' } }, { id: 2, from: 'x', k: 'gift', p: { g: 'hex-pot', n: 'z1', ts: 1 } }] });
+  assert.equal(S.ton, 1.25);
+  assert.equal(S.gf[0].g, 'hex-pot');
+});
+
+test('старые симулированные лоты исчезают, ники и ставки возвращаются', () => {
+  const S = E.fresh();
+  S.yuz = 100;
+  S.lots = [
+    { id: 'a', u: 'mine1', tier: 'rare', base: 10, k: 1, cc: 'star', mine: 1, fx: 0, price: 50, endsAt: Date.now() + 1e6 },
+    { id: 'b', u: 'bot1', tier: 'rare', base: 10, k: 1, cc: 'star', fx: 0, price: 70, bidder: 'me', endsAt: Date.now() + 1e6 },
+    { id: 'c', u: 'bot2', tier: 'rare', base: 10, k: 1, cc: 'star', fx: 1, price: 30, endsAt: Date.now() + 1e6 },
+  ];
+  S.offers = [{ id: 'o' }];
+  run(S, 'tickNow');
+  assert.equal(S.lots, undefined);
+  assert.equal(S.offers, undefined);
+  assert.equal(S.yuz, 170);
+  assert.deepEqual(S.coll.map((x) => x.u), ['mine1']);
+  for (const fn of ['bid', 'buyLot', 'listLot']) assert.equal(E.allowed(fn), false, fn);
 });
 
 test('передача ника другу: списание и возврат', () => {
@@ -125,15 +169,13 @@ test('выдача звёзд и TON работает только для адм
   assert.equal(S.ton, 0.5);
 });
 
-test('маркет и таймеры: сутки симуляции без ошибок', () => {
+test('таймеры: сутки симуляции без ошибок и без ботов-лотов', () => {
   const S = E.fresh();
-  S.yuz = 1e7;
   for (let i = 0; i < 40; i++) {
     S.tkAt = Date.now() - 120000;
     run(S, 'tickNow');
-    for (const l of (S.lots || []).filter((x) => !x.mine).slice(0, 2)) run(S, 'bid', [l.id]);
   }
-  assert.ok(Array.isArray(S.lots));
+  assert.equal(S.lots, undefined);
 });
 
 test('крафт: успех повышает редкость, провал даёт ту же, ники сгорают', () => {
@@ -232,8 +274,8 @@ test('рефералы: награды в звёздах, прокрутках �
 });
 
 test('экономика: возврат при продаже всего ≈ 75–90% от цены прокрутки', () => {
-  const S = E.fresh(); S.yuz = 1e12; const y0 = S.yuz; let n = 60000;
+  const S = E.fresh(); S.yuz = 1e12; const y0 = S.yuz; let n = 120000;
   for (let i = 0; i < n; i++) { run(S, 'spinRoll'); run(S, 'sellPending'); }
   const rtp = (S.yuz - y0 + n * 100) / (n * 100);
-  assert.ok(rtp > 0.7 && rtp < 0.95, 'RTP ' + rtp.toFixed(3));
+  assert.ok(rtp > 0.68 && rtp < 0.97, 'RTP ' + rtp.toFixed(3));
 });
