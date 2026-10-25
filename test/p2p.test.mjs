@@ -192,3 +192,15 @@ test('покупка подарка в магазине идёт через /api
   assert.equal(st.ton, 0);
   assert.equal(st.gf[0].g, 'ion-gem');
 });
+
+test('рейтинг: только реальные игроки, место считается по таблице', async () => {
+  await player(101, 'topone', 9e9, []);
+  await player(102, 'toptwo', 5, []);
+  const r = await api(102, 'toptwo', '/api/top', { cat: 'bal' });
+  assert.ok(r.ok);
+  assert.equal(r.top[0].n, '@topone');
+  assert.ok(r.top.every((x) => !/crypto_king|neo_wolf/.test(x.n)));
+  assert.ok(r.rank > 1);
+  assert.equal(r.mine, 5);
+  assert.equal((await api(101, 'topone', '/api/top', { cat: 'bal' })).rank, 1);
+});
