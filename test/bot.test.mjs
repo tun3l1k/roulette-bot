@@ -214,3 +214,11 @@ test('админ: TON ответом на кнопку, выдача всем, �
   await post({ message: { chat: { id: 700 }, from: { id: 700, first_name: 'T' }, text: '/code TONCODE' } });
   assert.match(sent.at(-1).b.text, /0\.3 💎/);
 });
+
+test('админ: /sales и /paysupport', async () => {
+  await env.DB.prepare("INSERT OR REPLACE INTO payments (charge, uid, item, amount, ts) VALUES ('t1', '700', 'p2', 250, ?)").bind(Date.now()).run();
+  await msg(1, '/sales');
+  assert.match(sent.at(-1).b.text, /Всего: <b>1<\/b> платежей · <b>250<\/b>/);
+  await msg(99, '/paysupport');
+  assert.match(sent.at(-1).b.text, /Поддержка по платежам/);
+});

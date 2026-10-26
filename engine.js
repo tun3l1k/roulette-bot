@@ -150,7 +150,7 @@ function spinRoll(){if(S.pending)return{err:'pending'};var fr=S.free>0;if(!fr&&S
  if(fr)S.free--;else{S.yuz-=COST;led('Прокрутка')}
  var t=pickTier(),r={u:build(t.id),tier:t.id,base:baseFor(t.id),k:rollBonus(),odds:oddsOf(t),ts:Date.now()};
  S.pending=r;noteBest(r);S.spins++;S.xp+=XPT[t.id];if(S.luck>0)S.luck--;
- levelCheck();S.pity=0;if(S.spins%500==0)S.pity=5;else if(S.spins%50==0)S.pity=2;if(S.pity)toast('Гарант! Следующая прокрутка: удача ×'+S.pity);
+ levelCheck();S.pity=0;if(S.spins%150==0)S.pity=50;else if(S.spins%50==0)S.pity=2;if(S.pity)toast('Гарант! Следующая прокрутка: удача ×'+S.pity);
  S.hist.unshift(r);if(S.hist.length>50)S.hist.pop();if(ti(r.tier)>=2){S.rare.unshift(r);if(S.rare.length>100)S.rare.pop()}
  tq('spin10');if(ti(r.tier)>=2)tq('rare1');
  if(Math.random()<.002){var tf=r3(.01+Math.random()*.04);S.ton=r3((S.ton||0)+tf);led('Находка TON');toast('Находка! +'+tonF(tf)+' TON')}
@@ -181,6 +181,7 @@ function sendDone(kind,rec,to){var gi=kind=='gift'?gInfo(rec.g):null;toast(gi?'�
 function inboxReceive(items){items.forEach(function(it){var p=it.p;
  if(it.k=='nick'){S.coll.unshift(p);noteBest(p);toast(p.note||('Подарок от @'+it.from+': ник @'+p.u));delete p.note}
   else if(it.k=='gift'){S.gf=S.gf||[];S.gf.unshift({g:p.g,n:p.n,ts:p.ts||Date.now()});var gi=gInfo(p.g);toast(p.note||('Подарок от @'+it.from+(gi?': '+gi.name:'')))}
+  else if(it.k=='shop'){shopGrant(p.id)}
   else if(it.k=='cash'){var a=Math.round(+p.amount)||0;if(a>0&&a<1e10){if(p.cc=='ton')S.ton=r3((S.ton||0)+a/1000);else S.yuz+=a;led(p.note||'Сделка с игроком');toast(p.note||('+'+(p.cc=='ton'?tonF(a/1000)+' TON':money(a))))}}})}
 
 // Деньги и продажа: звёзды, TON, продажа ников
@@ -312,19 +313,38 @@ function premDays(){return Math.max(0,Math.ceil(((S.prem||0)-Date.now())/864e5))
 function feeK(){return isPrem()?.97:.95}
 function feeTxt(){return isPrem()?'3% (Premium)':'5%'}
 function wheelMs(){return isPrem()?3*3600*1000:WHEEL_MS}
-function buyReal(title,price,fn){if(!PAY_LIVE){toast('Оплата Telegram Stars скоро');return}ask('Тестовая покупка: '+title+' за '+price+' Telegram Stars. Списаний нет, настоящая оплата подключится вместе с сервером.','Купить',function(){S.spent=(S.spent||0)+price;hap({type:'notification',notification_type:'success'});fn()})}
-function buyPack(id){var p=PACKS.filter(function(x){return x.id==id})[0];if(!p)return;buyReal(fmt(p.stars)+' ⭐',p.price,function(){S.yuz+=p.stars;led('Пакет '+abbr(p.stars)+' ⭐');save();toast('🎁 +'+money(p.stars));draw()})}
-function buyPrem(){buyReal('Premium на '+PREM_DAYS+' дней',PREM_PRICE,function(){S.prem=Math.max(Date.now(),S.prem||0)+PREM_DAYS*864e5;save();toast('✨ Premium активен ещё '+premDays()+' дн.');draw()})}
-function buyWheelReset(){buyReal('попытка колеса (копится)',WR_PRICE,function(){wheelSync();S.wt=(S.wt||0)+1;save();toast('Попытка колеса добавлена: '+S.wt);draw()})}
+// Настоящая оплата Telegram Stars: счёт создаёт сервер, покупку выдаёт тоже сервер после подтверждения платежа (через inbox)
+function shopItem(id){var p=PACKS.filter(function(x){return x.id==id})[0];
+ if(p)return{id:id,title:fmt(p.stars)+' звёзд',desc:'Пакет игровых звёзд: '+fmt(p.stars)+' ⭐',price:p.price};
+ if(id=='prem')return{id:id,title:'Premium на '+PREM_DAYS+' дней',desc:'Колесо каждые 3 часа, комиссия маркета 3%, +1 бесплатная прокрутка в день',price:PREM_PRICE};
+ if(id=='wr')return{id:id,title:'Попытка колеса фортуны',desc:'Дополнительная попытка колеса, копится и не сгорает',price:WR_PRICE};
+ return null}
+function shopGrant(id){var it=shopItem(id);if(!it)return;var p=PACKS.filter(function(x){return x.id==id})[0];S.spent=(S.spent||0)+it.price;
+ if(p){S.yuz+=p.stars;led('Пакет '+abbr(p.stars)+' ⭐');toast('🎁 Покупка: +'+money(p.stars))}
+ else if(id=='prem'){S.prem=Math.max(Date.now(),S.prem||0)+PREM_DAYS*864e5;toast('✨ Premium активен ещё '+premDays()+' дн.')}
+ else if(id=='wr'){wheelSync();S.wt=(S.wt||0)+1;toast('🎡 Попытка колеса добавлена: '+S.wt)}
+ save()}
+var PAYB=0;
+function payOn(){var w=window.Telegram&&window.Telegram.WebApp;return !!(typeof cloudOn=='function'&&cloudOn()&&w&&typeof w.openInvoice=='function')}
+function payPoll(s0,n){if(!SRV())return;srvRun('tickNow',[]).then(function(){if((S.spent||0)>s0){hap({type:'notification',notification_type:'success'});if(scr=='home')paintHome();else draw();return}
+ if(n<8)setTimeout(function(){payPoll(s0,n+1)},1500);else toast('Платёж обрабатывается, покупка придёт в течение минуты')})}
+function payStars(id){if(!payOn()){toast('Оплата Telegram Stars работает внутри Telegram');return}if(PAYB)return;PAYB=1;
+ cpost('/api/invoice',{initData:cInit(),id:id}).then(function(r){
+  if(!r||!r.ok||!r.link){PAYB=0;toast(r&&r.err=='maint'?'Сейчас технический перерыв':'Не удалось создать счёт, попробуй позже');return}
+  var s0=S.spent||0;window.Telegram.WebApp.openInvoice(r.link,function(st){PAYB=0;if(st=='paid'){toast('Платёж прошёл, зачисляем…');payPoll(s0,0)}else if(st=='failed')toast('Оплата не прошла')})
+ }).catch(function(){PAYB=0;toast('Нет связи с сервером')})}
+function buyPack(id){payStars(id)}
+function buyPrem(){payStars('prem')}
+function buyWheelReset(){payStars('wr')}
 function shopHtml(){var pr=isPrem();
  return '<div class="premc"><div class="premt"><span class="premi">'+IC.crown+'</span><div><b>Premium</b><small>'+(pr?'Активен · осталось '+premDays()+' дн.':PREM_DAYS+' дней')+'</small></div></div>'+
   '<ul class="premp"><li>Колесо фортуны каждые 3 часа вместо 5</li><li>Комиссия маркета 3% вместо 5%</li><li>+1 бесплатная прокрутка каждый день</li><li>Значок Premium в профиле</li></ul>'+
-  '<button class="premb" data-act="buyprem">'+(PAY_LIVE?(pr?'Продлить':'Подключить')+' · '+PREM_PRICE+' Stars':'Оплата скоро')+'</button></div>'+
+  '<button class="premb" data-act="buyprem">'+(payOn()?(pr?'Продлить':'Подключить')+' · '+PREM_PRICE+' ⭐ Stars':'Только в Telegram')+'</button></div>'+
   '<div class="sec">Пакеты звёзд</div><div class="grp">'+PACKS.map(function(p){return '<button class="go" data-bp="'+p.id+'"><span class="ic" style="background:#ffb020">'+SI(22)+'</span><div>'+fmt(p.stars)+' ⭐'+(p.tag?' <span class="badge sm" style="background:#34c759">'+p.tag+'</span>':'')+'</div><small style="margin-left:auto;color:var(--blue)">'+p.price+' Stars</small></button>'}).join('')+'</div>'+
   '<div class="sec">Ускорители</div><div class="grp"><button class="go" data-act="luck"><span class="ic" style="background:#34c759">'+ei('🍀')+'</span><div>Удача ×1,5<br><small style="margin:0">на 10 прокруток</small></div><small style="margin-left:auto;color:var(--blue)">'+money(LUCK_COST)+'</small></button>'+
   '<button class="go" data-act="buywr"><span class="ic" style="background:#ff9f0a">'+ei('🎡')+'</span><div>Ещё одна попытка колеса<br><small style="margin:0">копится, не сгорает</small></div><small style="margin-left:auto;color:var(--blue)">'+WR_PRICE+' Stars</small></button></div>'+
   '<div class="sec">Скоро</div><div class="grp"><div class="go"><span class="ic" style="background:#a259f7">'+ei('🏆')+'</span><div>Battle Pass<br><small style="margin:0">награды за прокрутки</small></div><small style="margin-left:auto">скоро</small></div><div class="go"><span class="ic" style="background:#ff5d8f">'+ei('🎨')+'</span><div>Рамки и темы профиля</div><small style="margin-left:auto">скоро</small></div></div>'+
-  '<div class="foot">Оплата будет через Telegram Stars (XTR). Пока она не подключена, покупки за Stars недоступны.</div>'}
+  '<div class="foot">Оплата через Telegram Stars. Покупка зачисляется сразу после платежа. Вопросы по оплате: команда /paysupport в боте.</div>'}
 
 // Админ-меню (скрыто за паролем; защита только от случайного входа, не настоящая безопасность)
 var ADM=false,ADM_FAIL=0,ADM_LOCK=0,ADM_H=-1989635603;
@@ -431,20 +451,18 @@ function build(id){var r=Math.random();switch(id){
  default:return rnd(DIVINE)}}
 // Бонус прокрутки: после ника крутится «барабан» множителей, цена ника умножается на выпавший
 var REVL=false,SKIP=false,STm=0,RTm=0,SPF=null;
-function skipNow(){if(SKIP)return;SKIP=true;if(STm){clearTimeout(STm);STm=0;if(SPF)SPF()}else if(REVL&&RTm){clearTimeout(RTm);RTm=0;if(typeof RVT=='function')RVT()}}
+function skipNow(){if(SKIP)return;SKIP=true;if(STm){clearTimeout(STm);STm=0;if(SPF)SPF()}else if(REVL&&RVT){RVT()}}
 var RVT=null;
 function countPrice(from,to,ms,cb){var el=$('hprice'),t0=Date.now();if(!el){cb();return}
  (function f(){var p=SKIP?1:Math.min(1,(Date.now()-t0)/ms),e=1-Math.pow(1-p,3);el.textContent='+'+money(from+(to-from)*e);if(p<1)requestAnimationFrame(f);else cb()})()}
+// Множитель показывается сразу готовым (без «барабана»), затем цена плавно дорастает до итоговой
 function reveal(r,cb){var hb=$('hbonus');if(!hb||S.anim===false){cb();return}
- var vals=BONUS.map(function(b){return b.k}),seq=[],n=12,i,k=bonusOf(r);for(i=0;i<n;i++)seq.push(vals[ri(0,vals.length-1)]);seq.push(k);
- var st=0;hb.className='bonus spin';
- function show(v){hb.innerHTML='<b style="color:'+bonusColor(v)+'">×'+fm(v)+'</b><small>бонус прокрутки</small>'}
- function tick(){if(SKIP&&st<seq.length-1)st=seq.length-1;show(seq[st]);if(!SKIP)hap({type:'selection_change'});st++;if(st<seq.length)RTm=setTimeout(tick,60+Math.round(Math.pow(st/n,2.2)*240));else{RTm=0;land()}}
- RVT=tick;
- function land(){hb.className='bonus land'+(k>1?' win':'');if(k<=1){hb.innerHTML='<b style="color:var(--sub)">×1</b><small>без бонуса</small>'}
-  var from=worthNoBonus(r),to=worth(r);if(k>=5)hap({type:'notification',notification_type:'success'});
-  countPrice(from,to,k>1?650:150,function(){RVT=null;if(SKIP)cb();else setTimeout(cb,k>1?500:250)})}
- tick()}
+ var k=bonusOf(r),from=worthNoBonus(r),to=worth(r);
+ hb.className='bonus land'+(k>1?' win':'');
+ hb.innerHTML=k>1?'<b style="color:'+bonusColor(k)+'">×'+fm(k)+'</b><small>бонус прокрутки</small>':'<small>без бонуса</small>';
+ if(k>=5)hap({type:'notification',notification_type:'success'});
+ countPrice(from,to,SKIP?260:(k>1?650:150),function(){var d=SKIP?(k>1?650:120):(k>1?500:250);
+  RVT=function(){clearTimeout(RTm);RTm=0;RVT=null;cb()};RTm=setTimeout(function(){RTm=0;RVT=null;cb()},d)})}
 function spin(){if(busy)return;
  if(S.pending)return toast('Сначала реши: продать или оставить');
  var fr=S.free>0;if(!fr&&S.yuz<COST)return toast('Не хватает звёзд: прокрутка стоит '+money(COST));
@@ -568,6 +586,7 @@ return{
  cfgInfo:cfgInfo,
  poolWords:function(k){var a=poolRef(k);return a?a.slice():[]},
  stats:function(state){S=state;var col=0;(S.coll||[]).forEach(function(x){col+=worth(x)});return{lvl:level(),bal:Math.round(S.yuz+(S.ton||0)*RATE),col:col,spn:S.spins||0,rar:(S.rare||[]).length,bst:S.best?worth(S.best):0}},
+ shopItem:function(id){return shopItem(id)},
  allowed:function(fn){return Object.prototype.hasOwnProperty.call(ACT,fn)},
  fresh:function(){S=defState();initState();return S},
  run:function(state,fn,args,ctx){ctx=ctx||{};S=state;MSGS=[];ADM=!!ctx.adm;cur=null;initState();

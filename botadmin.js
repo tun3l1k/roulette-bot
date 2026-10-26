@@ -116,6 +116,7 @@ export const ADMIN_HELP = `🛡 <b>Админ-меню</b>
 /give &lt;id|@ник&gt; star|ton &lt;сумма&gt; — выдать валюту
 /giveall star|ton &lt;сумма&gt; — выдать всем игрокам (с подтверждением)
 /market — статистика маркета игроков
+/sales — продажи за Telegram Stars
 /dellot &lt;номер&gt; — снять лот (ник/подарок вернётся продавцу, ставка покупателю)
 /take &lt;id|@ник&gt; star|ton &lt;сумма&gt; — списать
 /free &lt;id|@ник&gt; &lt;N&gt; — бесплатные прокрутки
@@ -258,6 +259,14 @@ export async function adminMessage(d, m, cmd) {
     await say(`⚠️ <b>Выдать всем (${nf(n.n)} игроков) по ${kind === 'ton' ? amt + ' 💎' : nf(amt) + ' ⭐'}?</b>`, {
       inline_keyboard: [[{ text: '✅ Да, выдать', callback_data: `g:${kind}:${amt}` }, { text: 'Отмена', callback_data: 'a:menu' }]],
     });
+    return true;
+  }
+  if (cmd === '/sales') {
+    const t = await env.DB.prepare('SELECT COUNT(*) AS n, COALESCE(SUM(amount),0) AS s FROM payments').first();
+    const d1 = await env.DB.prepare('SELECT COUNT(*) AS n, COALESCE(SUM(amount),0) AS s FROM payments WHERE ts > ?').bind(Date.now() - DAY).first();
+    const by = await env.DB.prepare('SELECT item, COUNT(*) AS n, SUM(amount) AS s FROM payments GROUP BY item ORDER BY s DESC').all();
+    const rows = (by.results || []).map((x) => `• ${esc(x.item)}: ${nf(x.n)} шт. · ${nf(x.s)} ⭐`);
+    await say(`💳 <b>Продажи за Telegram Stars</b>\n\nВсего: <b>${nf(t.n)}</b> платежей · <b>${nf(t.s)}</b> ⭐\nЗа 24 ч: <b>${nf(d1.n)}</b> · <b>${nf(d1.s)}</b> ⭐\n\n${rows.join('\n') || 'Продаж пока нет'}`);
     return true;
   }
   if (cmd === '/market') { await say(await marketText(env)); return true; }

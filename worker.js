@@ -69,6 +69,7 @@ async function verify(initData, token) {
   try { return String(JSON.parse(p.get('user')).id); } catch (e) { return null; }
 }
 
+const TOP_TTL = 2 * 3600 * 1000; // рейтинг пересчитывается раз в 2 часа
 let topCache = { at: 0, list: [] };
 let ready = false;
 async function ensure(env) {
@@ -79,6 +80,7 @@ async function ensure(env) {
     env.DB.prepare('CREATE TABLE IF NOT EXISTS referrals (invitee TEXT PRIMARY KEY, inviter TEXT, name TEXT, ts INTEGER)'),
     env.DB.prepare('CREATE TABLE IF NOT EXISTS config (k TEXT PRIMARY KEY, v TEXT)'),
     ...P2P_SCHEMA.map((q) => env.DB.prepare(q)),
+    env.DB.prepare('CREATE TABLE IF NOT EXISTS payments (charge TEXT PRIMARY KEY, uid TEXT, item TEXT, amount INTEGER, ts INTEGER)'),
     env.DB.prepare('CREATE TABLE IF NOT EXISTS bans (id TEXT PRIMARY KEY, reason TEXT, ts INTEGER)'),
     env.DB.prepare('CREATE TABLE IF NOT EXISTS promos (code TEXT PRIMARY KEY, kind TEXT, amount REAL, uses INTEGER, ts INTEGER)'),
     env.DB.prepare('CREATE TABLE IF NOT EXISTS promo_used (code TEXT, id TEXT, PRIMARY KEY (code, id))'),
@@ -248,9 +250,21 @@ async function api(request, env, url) {
     const d = diffState(r.before, r.out.S);
     return json({ ok: true, patch: d.patch, del: d.del, msgs: r.out.msgs });
   }
+  if (url.pathname === '/api/invoice') {
+    if (!adm && (await readMaint(env)).maint) return json({ ok: false, err: 'maint' }, 503);
+    const item = E.shopItem(String(body.id || ''));
+    if (!item) return json({ ok: false, err: 'item' });
+    const rs = await tg(env, 'createInvoiceLink', {
+      title: item.title.slice(0, 32), description: item.desc.slice(0, 255), payload: `${item.id}:${uid}`,
+      currency: 'XTR', prices: [{ label: item.title.slice(0, 32), amount: item.price }],
+    });
+    const j = await rs.json().catch(() => null);
+    if (!j || !j.ok || !j.result) return json({ ok: false, err: 'tg' });
+    return json({ ok: true, link: j.result });
+  }
   if (url.pathname === '/api/top') {
     const cat = ['lvl', 'bal', 'col', 'spn', 'rar', 'bst'].includes(body.cat) ? body.cat : 'lvl';
-    if (!topCache.at || Date.now() - topCache.at > 60000) {
+    if (!topCache.at || Date.now() - topCache.at > TOP_TTL) {
       E.setConfig(await gameCfg(env));
       const rows = await env.DB.prepare('SELECT id, state, uname FROM players ORDER BY sv DESC LIMIT 400').all();
       const list = [];
@@ -261,7 +275,7 @@ async function api(request, env, url) {
     }
     const sorted = topCache.list.slice().sort((a, b) => b.s[cat] - a.s[cat]);
     const at = sorted.findIndex((x) => x.id === uid);
-    return json({ ok: true, total: sorted.length, rank: at < 0 ? 0 : at + 1, mine: at < 0 ? 0 : sorted[at].s[cat],
+    return json({ ok: true, at: topCache.at, ttl: TOP_TTL, total: sorted.length, rank: at < 0 ? 0 : at + 1, mine: at < 0 ? 0 : sorted[at].s[cat],
       top: sorted.slice(0, 15).map((x) => ({ n: x.n, v: x.s[cat], me: x.id === uid })) });
   }
   if (url.pathname.startsWith('/api/p2p/')) {
@@ -297,6 +311,37 @@ export default {
     let update;
     try { update = await request.json(); } catch (e) { return new Response('ok'); }
     const deps = { env, tg, isAdmin, runAct, readMaint, ensure, E };
+    if (update.pre_checkout_query) {
+      const q = update.pre_checkout_query;
+      let ok = false, why = 'Не удалось проверить платёж';
+      try {
+        const [id, owner] = String(q.invoice_payload || '').split(':');
+        const item = E.shopItem(id);
+        const banned = env.DB && (await ensure(env), await env.DB.prepare('SELECT 1 AS x FROM bans WHERE id = ?').bind(String(q.from.id)).first());
+        ok = !!item && owner === String(q.from.id) && q.currency === 'XTR' && q.total_amount === item.price && !banned;
+        if (banned) why = 'Доступ закрыт';
+      } catch (e) { ok = false; }
+      await tg(env, 'answerPreCheckoutQuery', ok ? { pre_checkout_query_id: q.id, ok: true } : { pre_checkout_query_id: q.id, ok: false, error_message: why });
+      return new Response('ok');
+    }
+    if (update.message && update.message.successful_payment) {
+      const m = update.message, pay = m.successful_payment;
+      try {
+        await ensure(env);
+        const [id, owner] = String(pay.invoice_payload || '').split(':');
+        const item = E.shopItem(id);
+        if (item && owner === String(m.from.id) && pay.currency === 'XTR' && pay.total_amount === item.price) {
+          const res = await env.DB.batch([
+            env.DB.prepare('INSERT OR IGNORE INTO payments (charge, uid, item, amount, ts) VALUES (?, ?, ?, ?, ?)').bind(String(pay.telegram_payment_charge_id), owner, id, item.price, Date.now()),
+            env.DB.prepare("INSERT INTO inbox (to_id, from_name, kind, payload, ts) SELECT ?, 'магазин', 'shop', ?, ? WHERE changes() > 0").bind(owner, JSON.stringify({ id }), Date.now()),
+          ]);
+          await tg(env, 'sendMessage', { chat_id: m.chat.id, parse_mode: 'HTML', text: `✅ Оплата прошла: <b>${esc(item.title)}</b>. Покупка уже в игре. Если что-то не пришло, напиши /paysupport` });
+        } else {
+          console.log('bad payment', JSON.stringify({ id, owner, amount: pay.total_amount, cur: pay.currency }));
+        }
+      } catch (e) { console.log('payment error', e && e.message); return new Response('retry', { status: 500 }); }
+      return new Response('ok');
+    }
     if (update.callback_query) {
       try { await adminCallback(deps, update.callback_query); } catch (e) { console.log('admin cb', e && e.message); }
       return new Response('ok');
@@ -311,11 +356,15 @@ export default {
         try { handled = await adminMessage(deps, { ...m, text: `/give ${parts[0] || ''} ${cur} ${parts[1] || ''}` }, '/give'); } catch (e) { console.log('admin give', e && e.message); }
         if (handled) return new Response('ok');
       }
+      if (cmd === '/paysupport') {
+        await tg(env, 'sendMessage', { chat_id: m.chat.id, parse_mode: 'HTML', text: '💬 <b>Поддержка по платежам</b>\n\nЕсли оплата прошла, а покупка не пришла, подожди минуту и открой игру ещё раз. Если не помогло, напиши в поддержку (кнопка в настройках игры) и укажи время платежа.' });
+        return new Response('ok');
+      }
       if (cmd === '/code') {
         try { await adminCode(deps, m); } catch (e) { console.log('code', e && e.message); }
         return new Response('ok');
       }
-      if (/^\/(admin|stats|player|give|giveall|market|dellot|take|free|nick|find|ban|unban|bans|notice|promo|reset|maint|chance|price|craftp|cost|pool|cfg)$/.test(cmd)) {
+      if (/^\/(admin|stats|player|give|giveall|market|dellot|sales|take|free|nick|find|ban|unban|bans|notice|promo|reset|maint|chance|price|craftp|cost|pool|cfg)$/.test(cmd)) {
         let handled = false;
         try { handled = await adminMessage(deps, m, cmd); } catch (e) { console.log('admin', e && e.message); }
         if (handled) return new Response('ok');

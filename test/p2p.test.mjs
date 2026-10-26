@@ -17,7 +17,11 @@ function makeDB() {
   return { prepare: (s) => stmt(s), batch: async (l) => { for (const s of l) await s.run(); return []; } };
 }
 const sent = [];
-globalThis.fetch = async (url, o) => { sent.push({ m: String(url).split('/').pop(), b: JSON.parse(o.body) }); return new Response('{"ok":true}'); };
+globalThis.fetch = async (url, o) => {
+  const m = String(url).split('/').pop();
+  sent.push({ m, b: JSON.parse(o.body) });
+  return new Response(m === 'createInvoiceLink' ? '{"ok":true,"result":"https://t.me/$inv123"}' : '{"ok":true}');
+};
 const env = { BOT_TOKEN: 'tok', SECRET: 's', ADMIN_IDS: '1', DB: makeDB() };
 const E = createEngine();
 
@@ -203,4 +207,38 @@ test('рейтинг: только реальные игроки, место с�
   assert.ok(r.rank > 1);
   assert.equal(r.mine, 5);
   assert.equal((await api(101, 'topone', '/api/top', { cat: 'bal' })).rank, 1);
+});
+
+const hook = (u) => worker.fetch(new Request('https://x/', { method: 'POST', headers: { 'X-Telegram-Bot-Api-Secret-Token': 's' }, body: JSON.stringify(u) }), env);
+
+test('оплата Stars: счёт, проверка, зачисление один раз', async () => {
+  await player(201, 'payer', 0, []);
+  const inv = await api(201, 'payer', '/api/invoice', { id: 'p1' });
+  assert.equal(inv.link, 'https://t.me/$inv123');
+  const req = sent.filter((x) => x.m === 'createInvoiceLink').pop().b;
+  assert.equal(req.currency, 'XTR');
+  assert.equal(req.prices[0].amount, 50);
+  assert.equal(req.payload, 'p1:201');
+  assert.equal((await api(201, 'payer', '/api/invoice', { id: 'nope' })).err, 'item');
+
+  await hook({ pre_checkout_query: { id: 'q1', from: { id: 201 }, currency: 'XTR', total_amount: 50, invoice_payload: 'p1:201' } });
+  assert.equal(sent.at(-1).b.ok, true);
+  await hook({ pre_checkout_query: { id: 'q2', from: { id: 201 }, currency: 'XTR', total_amount: 1, invoice_payload: 'p1:201' } });
+  assert.equal(sent.at(-1).b.ok, false);
+  await hook({ pre_checkout_query: { id: 'q3', from: { id: 999 }, currency: 'XTR', total_amount: 50, invoice_payload: 'p1:201' } });
+  assert.equal(sent.at(-1).b.ok, false);
+
+  const before = (await bal(201)).yuz;
+  const pay = { message: { chat: { id: 201 }, from: { id: 201 }, successful_payment: { currency: 'XTR', total_amount: 50, invoice_payload: 'p1:201', telegram_payment_charge_id: 'ch1' } } };
+  await hook(pay);
+  await hook(pay); // повтор от Telegram не должен выдать второй раз
+  const st = await bal(201);
+  assert.equal(st.yuz - before, 1000);
+  assert.equal(st.spent, 50);
+  assert.equal((await env.DB.prepare('SELECT COUNT(*) AS n FROM payments').first()).n, 1);
+
+  await hook({ message: { chat: { id: 201 }, from: { id: 201 }, successful_payment: { currency: 'XTR', total_amount: 1, invoice_payload: 'prem:201', telegram_payment_charge_id: 'ch2' } } });
+  assert.equal((await bal(201)).prem, undefined); // неверная сумма: Premium не выдан
+  await hook({ message: { chat: { id: 201 }, from: { id: 201 }, successful_payment: { currency: 'XTR', total_amount: 150, invoice_payload: 'prem:201', telegram_payment_charge_id: 'ch3' } } });
+  assert.ok((await bal(201)).prem > Date.now());
 });
