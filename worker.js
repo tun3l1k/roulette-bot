@@ -69,6 +69,7 @@ async function verify(initData, token) {
   try { return String(JSON.parse(p.get('user')).id); } catch (e) { return null; }
 }
 
+const TOP_TTL = 2 * 3600 * 1000; // рейтинг пересчитывается раз в 2 часа
 let topCache = { at: 0, list: [] };
 let ready = false;
 async function ensure(env) {
@@ -263,7 +264,7 @@ async function api(request, env, url) {
   }
   if (url.pathname === '/api/top') {
     const cat = ['lvl', 'bal', 'col', 'spn', 'rar', 'bst'].includes(body.cat) ? body.cat : 'lvl';
-    if (!topCache.at || Date.now() - topCache.at > 60000) {
+    if (!topCache.at || Date.now() - topCache.at > TOP_TTL) {
       E.setConfig(await gameCfg(env));
       const rows = await env.DB.prepare('SELECT id, state, uname FROM players ORDER BY sv DESC LIMIT 400').all();
       const list = [];
@@ -274,7 +275,7 @@ async function api(request, env, url) {
     }
     const sorted = topCache.list.slice().sort((a, b) => b.s[cat] - a.s[cat]);
     const at = sorted.findIndex((x) => x.id === uid);
-    return json({ ok: true, total: sorted.length, rank: at < 0 ? 0 : at + 1, mine: at < 0 ? 0 : sorted[at].s[cat],
+    return json({ ok: true, at: topCache.at, ttl: TOP_TTL, total: sorted.length, rank: at < 0 ? 0 : at + 1, mine: at < 0 ? 0 : sorted[at].s[cat],
       top: sorted.slice(0, 15).map((x) => ({ n: x.n, v: x.s[cat], me: x.id === uid })) });
   }
   if (url.pathname.startsWith('/api/p2p/')) {

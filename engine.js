@@ -150,7 +150,7 @@ function spinRoll(){if(S.pending)return{err:'pending'};var fr=S.free>0;if(!fr&&S
  if(fr)S.free--;else{S.yuz-=COST;led('Прокрутка')}
  var t=pickTier(),r={u:build(t.id),tier:t.id,base:baseFor(t.id),k:rollBonus(),odds:oddsOf(t),ts:Date.now()};
  S.pending=r;noteBest(r);S.spins++;S.xp+=XPT[t.id];if(S.luck>0)S.luck--;
- levelCheck();S.pity=0;if(S.spins%500==0)S.pity=5;else if(S.spins%50==0)S.pity=2;if(S.pity)toast('Гарант! Следующая прокрутка: удача ×'+S.pity);
+ levelCheck();S.pity=0;if(S.spins%150==0)S.pity=50;else if(S.spins%50==0)S.pity=2;if(S.pity)toast('Гарант! Следующая прокрутка: удача ×'+S.pity);
  S.hist.unshift(r);if(S.hist.length>50)S.hist.pop();if(ti(r.tier)>=2){S.rare.unshift(r);if(S.rare.length>100)S.rare.pop()}
  tq('spin10');if(ti(r.tier)>=2)tq('rare1');
  if(Math.random()<.002){var tf=r3(.01+Math.random()*.04);S.ton=r3((S.ton||0)+tf);led('Находка TON');toast('Находка! +'+tonF(tf)+' TON')}
@@ -451,20 +451,18 @@ function build(id){var r=Math.random();switch(id){
  default:return rnd(DIVINE)}}
 // Бонус прокрутки: после ника крутится «барабан» множителей, цена ника умножается на выпавший
 var REVL=false,SKIP=false,STm=0,RTm=0,SPF=null;
-function skipNow(){if(SKIP)return;SKIP=true;if(STm){clearTimeout(STm);STm=0;if(SPF)SPF()}else if(REVL&&RTm){clearTimeout(RTm);RTm=0;if(typeof RVT=='function')RVT()}}
+function skipNow(){if(SKIP)return;SKIP=true;if(STm){clearTimeout(STm);STm=0;if(SPF)SPF()}else if(REVL&&RVT){RVT()}}
 var RVT=null;
 function countPrice(from,to,ms,cb){var el=$('hprice'),t0=Date.now();if(!el){cb();return}
- (function f(){var p=Math.min(1,(Date.now()-t0)/ms),e=1-Math.pow(1-p,3);el.textContent='+'+money(from+(to-from)*e);if(p<1)requestAnimationFrame(f);else cb()})()}
+ (function f(){var p=SKIP?1:Math.min(1,(Date.now()-t0)/ms),e=1-Math.pow(1-p,3);el.textContent='+'+money(from+(to-from)*e);if(p<1)requestAnimationFrame(f);else cb()})()}
+// Множитель показывается сразу готовым (без «барабана»), затем цена плавно дорастает до итоговой
 function reveal(r,cb){var hb=$('hbonus');if(!hb||S.anim===false){cb();return}
- var vals=BONUS.map(function(b){return b.k}),seq=[],n=12,i,k=bonusOf(r);for(i=0;i<n;i++)seq.push(vals[ri(0,vals.length-1)]);seq.push(k);
- var st=0;hb.className='bonus spin';
- function show(v){hb.innerHTML='<b style="color:'+bonusColor(v)+'">×'+fm(v)+'</b><small>бонус прокрутки</small>'}
- function tick(){if(SKIP&&st<seq.length-1)st=seq.length-1;show(seq[st]);if(!SKIP)hap({type:'selection_change'});st++;if(st<seq.length)RTm=setTimeout(tick,60+Math.round(Math.pow(st/n,2.2)*240));else{RTm=0;land()}}
- RVT=tick;
- function land(){hb.className='bonus land'+(k>1?' win':'');if(k<=1){hb.innerHTML='<b style="color:var(--sub)">×1</b><small>без бонуса</small>'}
-  var from=worthNoBonus(r),to=worth(r);if(k>=5)hap({type:'notification',notification_type:'success'});
-  countPrice(from,to,SKIP?260:(k>1?650:150),function(){RVT=null;setTimeout(cb,SKIP?(k>1?650:120):(k>1?500:250))})}
- tick()}
+ var k=bonusOf(r),from=worthNoBonus(r),to=worth(r);
+ hb.className='bonus land'+(k>1?' win':'');
+ hb.innerHTML=k>1?'<b style="color:'+bonusColor(k)+'">×'+fm(k)+'</b><small>бонус прокрутки</small>':'<small>без бонуса</small>';
+ if(k>=5)hap({type:'notification',notification_type:'success'});
+ countPrice(from,to,SKIP?260:(k>1?650:150),function(){var d=SKIP?(k>1?650:120):(k>1?500:250);
+  RVT=function(){clearTimeout(RTm);RTm=0;RVT=null;cb()};RTm=setTimeout(function(){RTm=0;RVT=null;cb()},d)})}
 function spin(){if(busy)return;
  if(S.pending)return toast('Сначала реши: продать или оставить');
  var fr=S.free>0;if(!fr&&S.yuz<COST)return toast('Не хватает звёзд: прокрутка стоит '+money(COST));

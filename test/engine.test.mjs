@@ -281,3 +281,19 @@ test('экономика: возврат при продаже всего ≈ 75
   const rtp = (S.yuz - y0 + n * 100) / (n * 100);
   assert.ok(rtp > 0.68 && rtp < 0.97, 'RTP ' + rtp.toFixed(3));
 });
+
+test('гарант удачи: ×2 каждые 50 прокруток, ×50 каждые 150', () => {
+  const S = E.fresh();
+  S.yuz = 1e9;
+  const seen = {};
+  for (let i = 0; i < 300; i++) {
+    run(S, 'spinRoll');
+    run(S, 'sellPending');
+    if (S.pity) seen[S.spins] = S.pity;
+  }
+  assert.equal(seen[50], 2);
+  assert.equal(seen[100], 2);
+  assert.equal(seen[150], 50);
+  assert.equal(seen[300], 50);
+  assert.equal(seen[500], undefined);
+});
