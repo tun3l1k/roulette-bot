@@ -297,3 +297,22 @@ test('гарант удачи: ×2 каждые 50 прокруток, ×50 ка
   assert.equal(seen[300], 50);
   assert.equal(seen[500], undefined);
 });
+
+test('множители ников: длина, буквы, цифры, лесенка, подчёркивание', () => {
+  const E = createEngine();
+  const m = (u) => E.mult(u);
+  const lbl = (u) => m(u).parts.map((p) => p[0]);
+  assert.ok(lbl('abc').includes('лесенка'));
+  assert.ok(lbl('abc123x').includes('лесенка')); // цифры 123 внутри ника
+  assert.ok(!lbl('alexander').includes('лесенка'));
+  assert.ok(lbl('hello').includes('две одинаковые буквы'));
+  assert.ok(lbl('aaab').includes('три одинаковые буквы'));
+  assert.ok(lbl('user1111').includes('четыре одинаковые цифры'));
+  assert.ok(lbl('user77').includes('две одинаковые цифры'));
+  assert.ok(lbl('some_name').includes('подчёркивание'));
+  assert.ok(lbl('user48261').includes('много цифр'));
+  assert.ok(!lbl('user2024').includes('много цифр'));
+  assert.ok(lbl('abccba').includes('зеркальный ник'));
+  assert.ok(lbl('boss').includes('статусное слово'));
+  assert.equal(m('qxkmvb').m, 1.1); // 6 символов без особенностей
+});
