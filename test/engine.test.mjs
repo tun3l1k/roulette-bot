@@ -282,20 +282,16 @@ test('экономика: возврат при продаже всего ≈ 75
   assert.ok(rtp > 0.68 && rtp < 0.97, 'RTP ' + rtp.toFixed(3));
 });
 
-test('гарант удачи: ×2 каждые 50 прокруток, ×50 каждые 150', () => {
+test('гарант: 100-я прокрутка — эпический+, 300-я — легендарный+', () => {
   const S = E.fresh();
   S.yuz = 1e9;
-  const seen = {};
-  for (let i = 0; i < 300; i++) {
-    run(S, 'spinRoll');
+  const idx = { common: 0, norm: 1, rare: 2, epic: 3, legend: 4, mythic: 5, divine: 6 };
+  for (let i = 1; i <= 600; i++) {
+    const r = run(S, 'spinRoll').res.r;
     run(S, 'sellPending');
-    if (S.pity) seen[S.spins] = S.pity;
+    if (i % 300 === 0) assert.ok(idx[r.tier] >= 4, 'спин ' + i + ' ' + r.tier);
+    else if (i % 100 === 0) assert.ok(idx[r.tier] >= 3, 'спин ' + i + ' ' + r.tier);
   }
-  assert.equal(seen[50], 2);
-  assert.equal(seen[100], 2);
-  assert.equal(seen[150], 50);
-  assert.equal(seen[300], 50);
-  assert.equal(seen[500], undefined);
 });
 
 test('множители ников: длина, буквы, цифры, лесенка, подчёркивание', () => {
