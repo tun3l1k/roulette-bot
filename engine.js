@@ -5,7 +5,7 @@ var document=NOOP,window=NOOP,navigator=NOOP,location=NOOP,localStorage=NOOP,ses
 var S=null,TG=null,cur=null,busy=false,scr='home',MSGS=[];
 function hap(){}function draw(){}function paintHome(){}function go(){}function back(){}function ask(){}function save(){}function SRV(){return false}
 // Настройки игры: редкости, словари, диапазоны, курс, задания
-var APP_VER='2.4.0';
+var APP_VER='2.4.1';
 var NEWS_URL='https://t.me/UsernameRouletteNews',SUPPORT_URL='https://t.me/TUN3L';
 var PAY_LIVE=false; // true, когда подключена настоящая оплата Telegram Stars
 var TIERS=[
@@ -158,10 +158,11 @@ function multText(r){var x=mult(r.u),b=r.base!=null?r.base:tier(r.tier).pts,k=bo
 function mxParts(r){var p=mult(r.u).parts.slice(),k=bonusOf(r);if(k>1)p.push(['бонус',k]);return p}
 function mxTotal(r){return mult(r.u).m*bonusOf(r)}
 // Панель множителей под ником: каждый фактор отдельной плашкой, внизу итог (всё перемножается)
-function mxHtml(r,anim){if(!r)return '';var p=mxParts(r),tot=mxTotal(r),col=bonusColor(tot);
+function mxHtml(r,anim){if(!r)return '';var p=mxParts(r),tot=mxTotal(r),col=tot>1?bonusColor(tot):'var(--sub)';
  if(!p.length)return '<div class="mxe">без множителей</div>';
- return '<div class="mxrow">'+p.map(function(x,i){var b=x[0]=='бонус';return '<span class="mxc'+(b?' bn':'')+(anim?' in':'')+'" style="'+(b?'color:'+bonusColor(x[1])+';':'')+(anim?'animation-delay:'+(i*120)+'ms':'')+'"><i>'+x[0]+'</i><b>×'+fm(x[1])+'</b></span>'}).join('')+'</div>'+
-  '<div class="mxt'+(anim?' in':'')+(tot>=10?' hot':'')+'" style="color:'+col+(anim?';animation-delay:'+(p.length*120)+'ms':'')+'"><small>общий множитель</small><b>×'+fm(tot)+'</b></div>'}
+ var d=function(i){return anim?'animation-delay:'+(i*110)+'ms':''};
+ return '<div class="mxrow">'+p.map(function(x,i){var b=x[0]=='бонус';return '<span class="mxc'+(b?' bn':'')+(anim?' in':'')+'" style="'+(b?'color:'+bonusColor(x[1])+';':'')+d(i)+'"><i>'+x[0]+'</i><b>×'+fm(x[1])+'</b></span>'}).join('')+
+  (p.length>1?'<span class="mxeq">=</span><span class="mxt'+(anim?' in':'')+'" style="color:'+col+';'+d(p.length)+'">×'+fm(tot)+'</span>':'')+'</div>'}
 function mx(u){var m=mult(u).m;return m>1?' · ×'+fm(m):''}
 
 // Действия экономики. Этот код выполняется на сервере (источник правды) и локально, если сервера нет
