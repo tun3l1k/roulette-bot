@@ -5,7 +5,7 @@ var document=NOOP,window=NOOP,navigator=NOOP,location=NOOP,localStorage=NOOP,ses
 var S=null,TG=null,cur=null,busy=false,scr='home',MSGS=[];
 function hap(){}function draw(){}function paintHome(){}function go(){}function back(){}function ask(){}function save(){}function SRV(){return false}
 // Настройки игры: редкости, словари, диапазоны, курс, задания
-var APP_VER='2.0.0';
+var APP_VER='2.1.0';
 var NEWS_URL='https://t.me/UsernameRouletteNews',SUPPORT_URL='https://t.me/TUN3L';
 var PAY_LIVE=false; // true, когда подключена настоящая оплата Telegram Stars
 var TIERS=[
@@ -470,7 +470,7 @@ function spin(){if(busy)return;
  var D=S.anim===false?[70]:[55,60,68,80,96,116,140,170,205,245],n=0;
  function done(o){var rr=o&&o.res;var he=$('huname');if(he)he.style.opacity='1';
   if(!rr||rr.err||!rr.r){busy=false;paintHome();if(o&&o.err)toast('Нет связи с сервером');return}
-  var r=rr.r;cur=r;REVL=S.anim!==false;paintHome(1);buzzEnd(r);(o.msgs||[]).forEach(function(m){toast(m)});
+  var r=rr.r;SKIP=false;cur=r;REVL=S.anim!==false;paintHome(1);buzzEnd(r);(o.msgs||[]).forEach(function(m){toast(m)});
   reveal(r,function(){REVL=false;busy=false;paintHome();autoHandle(r)})}
  function finish(){STm=0;SPF=null;if(P)P.then(done);else done({res:spinRoll(),msgs:[]})}
  SPF=finish;
