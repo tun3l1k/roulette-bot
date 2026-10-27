@@ -130,6 +130,13 @@ function bonusColor(k){return k>=100?'#ffd700':k>=25?'#ff3b30':k>=10?'#ff9500':k
 function worthNoBonus(r){return Math.max(1,Math.round((r.base!=null?r.base:tier(r.tier).pts)*mult(r.u).m))}
 function worth(r){return Math.max(1,Math.round((r.base!=null?r.base:tier(r.tier).pts)*mult(r.u).m*bonusOf(r)))}
 function multText(r){var x=mult(r.u),b=r.base!=null?r.base:tier(r.tier).pts,k=bonusOf(r),pp=x.parts.slice();if(k>1)pp.push(['бонус',k]);if(!pp.length)return 'Цена: '+money(b);return 'Цена: '+money(b)+' '+pp.map(function(p){return '× '+fm(p[1])+' '+p[0]}).join(' ')+' = '+money(worth(r))}
+function mxParts(r){var p=mult(r.u).parts.slice(),k=bonusOf(r);if(k>1)p.push(['бонус',k]);return p}
+function mxTotal(r){return mult(r.u).m*bonusOf(r)}
+// Панель множителей под ником: каждый фактор отдельной плашкой, внизу итог (всё перемножается)
+function mxHtml(r,anim){if(!r)return '';var p=mxParts(r),tot=mxTotal(r),col=bonusColor(tot);
+ if(!p.length)return '<div class="mxe">без множителей</div>';
+ return '<div class="mxrow">'+p.map(function(x,i){var b=x[0]=='бонус';return '<span class="mxc'+(b?' bn':'')+(anim?' in':'')+'" style="'+(b?'color:'+bonusColor(x[1])+';':'')+(anim?'animation-delay:'+(i*120)+'ms':'')+'"><i>'+x[0]+'</i><b>×'+fm(x[1])+'</b></span>'}).join('')+'</div>'+
+  '<div class="mxt'+(anim?' in':'')+(tot>=10?' hot':'')+'" style="color:'+col+(anim?';animation-delay:'+(p.length*120)+'ms':'')+'"><small>общий множитель</small><b>×'+fm(tot)+'</b></div>'}
 function mx(u){var m=mult(u).m;return m>1?' · ×'+fm(m):''}
 
 // Действия экономики. Этот код выполняется на сервере (источник правды) и локально, если сервера нет
@@ -457,11 +464,10 @@ function countPrice(from,to,ms,cb){var el=$('hprice'),t0=Date.now();if(!el){cb()
  (function f(){var p=SKIP?1:Math.min(1,(Date.now()-t0)/ms),e=1-Math.pow(1-p,3);el.textContent='+'+money(from+(to-from)*e);if(p<1)requestAnimationFrame(f);else cb()})()}
 // Множитель показывается сразу готовым (без «барабана»), затем цена плавно дорастает до итоговой
 function reveal(r,cb){var hb=$('hbonus');if(!hb||S.anim===false){cb();return}
- var k=bonusOf(r),from=worthNoBonus(r),to=worth(r);
- hb.className='bonus land'+(k>1?' win':'');
- hb.innerHTML=k>1?'<b style="color:'+bonusColor(k)+'">×'+fm(k)+'</b><small>бонус прокрутки</small>':'<small>без бонуса</small>';
- if(k>=5)hap({type:'notification',notification_type:'success'});
- countPrice(from,to,SKIP?260:(k>1?650:150),function(){var d=SKIP?(k>1?650:120):(k>1?500:250);
+ var k=bonusOf(r),from=worthNoBonus(r),to=worth(r),big=mxTotal(r);
+ hb.className='mxp';hb.innerHTML=SKIP?mxHtml(r,false):mxHtml(r,true);
+ if(k>=5||big>=10)hap({type:'notification',notification_type:'success'});
+ countPrice(from,to,SKIP?260:(big>1?900:150),function(){var d=SKIP?(big>1?650:120):(big>1?600:250);
   RVT=function(){clearTimeout(RTm);RTm=0;RVT=null;cb()};RTm=setTimeout(function(){RTm=0;RVT=null;cb()},d)})}
 function spin(){if(busy)return;
  if(S.pending)return toast('Сначала реши: продать или оставить');
@@ -516,13 +522,19 @@ function claimLogin(tz){var t=dayNum(tz),lg=S.lg;
  S.lg={d:t,n:n,at:Date.now(),t:((lg&&lg.t)||0)+1};led('Ежедневный вход');save();
  hap({type:'notification',notification_type:'success'});toast('День '+n+': +'+money(r.s)+(r.f?' и '+r.f+' прокр.':'')+(r.l?' · удача на '+r.l:''));draw();return{ok:1,n:n}}
 function loginRewardText(r){return money(r.s)+(r.f?' · '+r.f+' прокр.':'')+(r.l?' · удача ×1,5':'')}
-function dailyHtml(){var tz=new Date().getTimezoneOffset(),i=loginInfo(tz),cyc=LOGIN_R.length,cur=i.done?((i.n-1)%cyc):(i.next-1)%cyc;
- var head='<div class="refc"><div class="refh">Серия входов: '+(i.done?i.n:i.n)+' '+(i.n==1?'день':'дней')+'</div><div class="refp">'+(i.done?'Награда за сегодня получена. Возвращайся завтра, серия не прервётся.':(i.lost?'Серия прервалась, начни заново: день 1.':'Заходи каждый день: награды растут до 7-го дня и повторяются.'))+'</div></div>';
- var rows='<div class="grp">'+LOGIN_R.map(function(r,k){var got=i.done?k<=cur:k<cur,now=!i.done&&k==cur;
-  return '<div class="go'+(now?' sel':'')+'"><span style="width:12px;height:12px;border-radius:50%;background:'+(got?'#34c759':now?'var(--blue)':'var(--sep)')+';flex:none"></span><span>День '+(k+1)+'</span><small style="color:'+(got?'#34c759':now?'var(--text)':'var(--sub)')+'">'+(got?'✓ ':'')+loginRewardText(r)+'</small></div>'}).join('')+'</div>';
- var btn=i.done?'<button class="pbtn" style="width:100%;margin-top:14px" disabled>Получено сегодня</button>':'<button class="pbtn" style="width:100%;margin-top:14px" data-act="claimlogin">Получить · '+loginRewardText(LOGIN_R[cur])+'</button>';
- var lv='<div class="sec">Награды за уровни</div><div class="grp"><div class="go"><span>Новый уровень</span><small>50 ⭐ × уровень + 50</small></div><div class="go"><span>Каждый 5-й уровень</span><small>+5 прокруток</small></div><div class="go"><span>Сейчас</span><small>Уровень '+level()+'</small></div></div>';
- return head+btn+'<div class="sec">Награды за 7 дней</div>'+rows+lv}
+// Окно ежедневной награды: появляется само при входе в игру, пока награда за сегодня не получена
+var DLYS=false;
+function dailyBody(){var i=loginInfo(new Date().getTimezoneOffset()),cyc=LOGIN_R.length,cur=(i.next-1)%cyc,day=cur+1;
+ var cells=LOGIN_R.map(function(r,k){var got=k<cur,now=k==cur;
+  return '<div class="dc'+(got?' got':'')+(now?' now':'')+(k==cyc-1?' last':'')+'"><small>День '+(k+1)+'</small><b>'+(got?'✓':SI(18))+'</b><span>'+fmt(r.s)+'</span>'+(r.f?'<em>+'+r.f+' прокр.</em>':'')+(r.l?'<em>удача ×1,5</em>':'')+'</div>'}).join('');
+ return '<div class="dhead"><div class="dico">'+IC.medal+'</div><h3>Ежедневная награда</h3><p>'+(i.lost?'Серия прервалась, начинаем заново.':i.n>0?'Серия: '+i.n+' '+(i.n==1?'день':i.n<5?'дня':'дней')+' подряд. Не пропускай!':'Заходи каждый день: награды растут до 7-го дня.')+'</p></div>'+
+  '<div class="dgrid">'+cells+'</div><button class="pbtn" style="width:100%;margin-top:16px" data-dl="go">Забрать · '+loginRewardText(LOGIN_R[cur])+'</button><button class="plainbtn" data-dl="x">Позже</button>'}
+function dailyPop(){if(document.querySelector('.ov.dly'))return;var o=document.createElement('div');o.className='ov dly';
+ o.innerHTML='<div class="sh dsh">'+dailyBody()+'</div>';
+ o.addEventListener('click',function(e){var b=e.target.closest('[data-dl]');if(!b&&e.target!==o)return;
+  if(b&&b.getAttribute('data-dl')=='go'){b.disabled=true;Promise.resolve(claimLogin(new Date().getTimezoneOffset())).then(function(){o.remove()},function(){o.remove()})}else o.remove()});
+ document.body.appendChild(o)}
+function dailyAuto(){if(DLYS)return;DLYS=true;if(loginInfo(new Date().getTimezoneOffset()).done)return;setTimeout(dailyPop,500)}
 function levelCheck(){var L=level();if(S.lvR===undefined){S.lvR=L;return}
  while(S.lvR<L&&S.lvR<500){S.lvR++;var st=50*S.lvR+50,fr=S.lvR%5==0?5:0;S.yuz+=st;if(fr)S.free=(S.free||0)+fr;led('Уровень '+S.lvR);toast('Уровень '+S.lvR+'! +'+money(st)+(fr?' и '+fr+' прокруток':''))}}
 // Сделки между игроками: деньги уходят в залог на сервере (p2pPay), возвращаются через p2pRefund или входящие «cash»
