@@ -15,6 +15,7 @@ return{
  poolWords:function(k){var a=poolRef(k);return a?a.slice():[]},
  stats:function(state){S=state;var col=0;(S.coll||[]).forEach(function(x){col+=worth(x)});return{lvl:level(),bal:Math.round(S.yuz+(S.ton||0)*RATE),col:col,spn:S.spins||0,rar:(S.rare||[]).length,bst:S.best?worth(S.best):0}},
  shopItem:function(id){return shopItem(id)},
+ giftName:function(id){var g=gInfo(id);return g?g.name:null},
  allowed:function(fn){return Object.prototype.hasOwnProperty.call(ACT,fn)},
  fresh:function(){S=defState();initState();return S},
  run:function(state,fn,args,ctx){ctx=ctx||{};S=state;MSGS=[];ADM=!!ctx.adm;cur=null;initState();

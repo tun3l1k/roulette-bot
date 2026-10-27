@@ -84,6 +84,7 @@ async function ensure(env) {
     env.DB.prepare('CREATE TABLE IF NOT EXISTS bans (id TEXT PRIMARY KEY, reason TEXT, ts INTEGER)'),
     env.DB.prepare('CREATE TABLE IF NOT EXISTS promos (code TEXT PRIMARY KEY, kind TEXT, amount REAL, uses INTEGER, ts INTEGER)'),
     env.DB.prepare('CREATE TABLE IF NOT EXISTS promo_used (code TEXT, id TEXT, PRIMARY KEY (code, id))'),
+    env.DB.prepare('CREATE TABLE IF NOT EXISTS transfers (id TEXT PRIMARY KEY, from_id TEXT, from_name TEXT, to_id TEXT, kind TEXT, payload TEXT, status TEXT, ts INTEGER)'),
     env.DB.prepare('CREATE TABLE IF NOT EXISTS inbox (id INTEGER PRIMARY KEY AUTOINCREMENT, to_id TEXT, from_name TEXT, kind TEXT, payload TEXT, ts INTEGER)'),
   ]);
   for (const sql of ['ALTER TABLE players ADD COLUMN ver INTEGER DEFAULT 0', 'ALTER TABLE players ADD COLUMN uname TEXT', ...P2P_ALTER]) {
@@ -147,6 +148,40 @@ function diffState(before, after) {
   for (const k of Object.keys(a)) { if (k !== 'tkAt' && before[k] !== a[k]) patch[k] = after[k]; }
   for (const k of Object.keys(before)) if (!(k in a)) del.push(k);
   return { patch, del };
+}
+const TRANSFER_TTL = 3 * 24 * 3600 * 1000;
+async function transferCallback(env, cb) {
+  const ans = (text) => tg(env, 'answerCallbackQuery', { callback_query_id: cb.id, ...(text ? { text } : {}) });
+  const edit = (text) => cb.message && tg(env, 'editMessageText', { chat_id: cb.message.chat.id, message_id: cb.message.message_id, parse_mode: 'HTML', text });
+  await ensure(env);
+  const [, act, id] = String(cb.data).split(':');
+  const row = await env.DB.prepare('SELECT * FROM transfers WHERE id = ?').bind(id).first();
+  if (!row || String(row.to_id) !== String(cb.from && cb.from.id)) { await ans('Это не твой подарок'); return; }
+  if (row.status !== 'pending') { await ans('Уже обработано'); await edit('Это предложение уже обработано.'); return; }
+  const rec = JSON.parse(row.payload);
+  const expired = Date.now() - row.ts > TRANSFER_TTL;
+  const accept = act === 'y' && !expired;
+  const upd = await env.DB.prepare("UPDATE transfers SET status = ? WHERE id = ? AND status = 'pending'").bind(accept ? 'accepted' : expired ? 'expired' : 'declined', id).run();
+  if (!(upd && upd.meta && upd.meta.changes)) { await ans('Уже обработано'); return; }
+  if (accept) {
+    await env.DB.prepare('INSERT INTO inbox (to_id, from_name, kind, payload, ts) VALUES (?, ?, ?, ?, ?)').bind(row.to_id, row.from_name, row.kind, row.payload, Date.now()).run();
+    await ans('Принято'); await edit('✅ Подарок от <b>@' + esc(row.from_name) + '</b> принят. Он уже в игре.');
+    await tg(env, 'sendMessage', { chat_id: row.from_id, text: '✅ Твой подарок принят.' }).catch(() => {});
+  } else {
+    const back = { ...rec, note: expired ? 'Подарок не приняли вовремя, он вернулся к тебе' : 'Друг отклонил подарок, он вернулся к тебе' };
+    await env.DB.prepare('INSERT INTO inbox (to_id, from_name, kind, payload, ts) VALUES (?, ?, ?, ?, ?)').bind(row.from_id, row.from_name, row.kind, JSON.stringify(back), Date.now()).run();
+    await ans(expired ? 'Срок вышел' : 'Отклонено'); await edit(expired ? '⌛ Срок предложения вышел, подарок вернулся отправителю.' : '❌ Ты отклонил подарок, он вернулся отправителю.');
+    await tg(env, 'sendMessage', { chat_id: row.from_id, text: expired ? '⌛ Подарок не приняли вовремя, он вернулся в игру.' : '❌ Друг отклонил подарок, он вернулся в игру.' }).catch(() => {});
+  }
+}
+async function sweepMine(env, uid) {
+  const rows = await env.DB.prepare("SELECT * FROM transfers WHERE from_id = ? AND status = 'pending' AND ts < ?").bind(uid, Date.now() - TRANSFER_TTL).all();
+  for (const row of rows.results || []) {
+    const u = await env.DB.prepare("UPDATE transfers SET status = 'expired' WHERE id = ? AND status = 'pending'").bind(row.id).run();
+    if (!(u && u.meta && u.meta.changes)) continue;
+    const back = { ...JSON.parse(row.payload), note: 'Подарок не приняли вовремя, он вернулся к тебе' };
+    await env.DB.prepare('INSERT INTO inbox (to_id, from_name, kind, payload, ts) VALUES (?, ?, ?, ?, ?)').bind(uid, row.from_name, row.kind, JSON.stringify(back), Date.now()).run();
+  }
 }
 async function runAct(env, uid, uname, adm, fn, args, prefs, internal) {
   for (let attempt = 0; attempt < 5; attempt++) {
@@ -216,6 +251,7 @@ async function api(request, env, url) {
   if (url.pathname === '/api/load' || url.pathname === '/api/prefs' || url.pathname === '/api/save') {
     // /api/save остался для старых версий игры: принимает только настройки, экономику клиент менять не может
     const prefs = url.pathname === '/api/save' ? body.state : body.prefs;
+    if (url.pathname === '/api/load') await sweepMine(env, uid).catch(() => {});
     const r = await runAct(env, uid, nm.uname, adm, '__load', [], prefs);
     if (url.pathname === '/api/load') return json({ ok: true, eng: true, state: r.out.S, msgs: r.out.msgs });
     return json({ ok: true });
@@ -231,6 +267,7 @@ async function api(request, env, url) {
   if (url.pathname === '/api/send') {
     if (!adm && (await readMaint(env)).maint) return json({ ok: false, err: 'maint' }, 503);
     const kind = body.kind === 'gift' ? 'gift' : 'nick';
+    await sweepMine(env, uid);
     const to = String(body.to || '').replace(/^@/, '').toLowerCase();
     if (!/^[a-z0-9_]{5,32}$/.test(to)) return json({ ok: false, err: 'name' });
     const rcp = await env.DB.prepare('SELECT id FROM players WHERE uname = ?').bind(to).first();
@@ -240,12 +277,26 @@ async function api(request, env, url) {
     const res = r.out.res;
     if (!res || res.err) return json({ ok: false, err: (res && res.err) || 'item' });
     const rec = res.rec;
+    const tid = crypto.randomUUID().replace(/-/g, '').slice(0, 12);
+    const fromName = nm.uname || nm.first || 'друг';
+    let sentOk = false;
     try {
-      await env.DB.prepare('INSERT INTO inbox (to_id, from_name, kind, payload, ts) VALUES (?, ?, ?, ?, ?)')
-        .bind(rcp.id, nm.uname || nm.first || 'друг', kind, JSON.stringify(rec), Date.now()).run();
-    } catch (e) {
+      await env.DB.prepare("INSERT INTO transfers (id, from_id, from_name, to_id, kind, payload, status, ts) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)")
+        .bind(tid, uid, fromName, rcp.id, kind, JSON.stringify(rec), Date.now()).run();
+      const gi = kind === 'gift' ? E.giftName && E.giftName(rec.g) : null;
+      const what = kind === 'gift' ? '🎁 подарок <b>' + esc(gi || rec.g) + '</b>' : 'ник <b>@' + esc(rec.u) + '</b>';
+      const rs = await tg(env, 'sendMessage', {
+        chat_id: rcp.id, parse_mode: 'HTML',
+        text: `🎁 <b>@${esc(fromName)}</b> хочет подарить тебе ${what}.\n\nПринять подарок?`,
+        reply_markup: { inline_keyboard: [[{ text: '✅ Принять', callback_data: 't:y:' + tid }, { text: '❌ Отклонить', callback_data: 't:n:' + tid }]] },
+      });
+      const j = await rs.json().catch(() => null);
+      sentOk = !!(j && j.ok);
+    } catch (e) { sentOk = false; }
+    if (!sentOk) {
+      await env.DB.prepare("UPDATE transfers SET status = 'failed' WHERE id = ? AND status = 'pending'").bind(tid).run().catch(() => {});
       await runAct(env, uid, nm.uname, adm, 'giftRefund', [kind, rec], null, true);
-      return json({ ok: false, err: 'fail' });
+      return json({ ok: false, err: 'no_chat' });
     }
     const d = diffState(r.before, r.out.S);
     return json({ ok: true, patch: d.patch, del: d.del, msgs: r.out.msgs });
@@ -340,6 +391,10 @@ export default {
           console.log('bad payment', JSON.stringify({ id, owner, amount: pay.total_amount, cur: pay.currency }));
         }
       } catch (e) { console.log('payment error', e && e.message); return new Response('retry', { status: 500 }); }
+      return new Response('ok');
+    }
+    if (update.callback_query && /^t:[yn]:[0-9a-f]{12}$/.test(String(update.callback_query.data || ''))) {
+      try { await transferCallback(env, update.callback_query); } catch (e) { console.log('transfer cb', e && e.message); }
       return new Response('ok');
     }
     if (update.callback_query) {
