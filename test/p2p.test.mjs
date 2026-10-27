@@ -25,6 +25,8 @@ globalThis.fetch = async (url, o) => {
 const env = { BOT_TOKEN: 'tok', SECRET: 's', ADMIN_IDS: '1', DB: makeDB() };
 const E = createEngine();
 
+const hook = (u) => worker.fetch(new Request('https://x/', { method: 'POST', headers: { 'X-Telegram-Bot-Api-Secret-Token': 's' }, body: JSON.stringify(u) }), env);
+
 function init(id, name) {
   const p = new URLSearchParams({ auth_date: String(Math.floor(Date.now() / 1000)), user: JSON.stringify({ id, username: name, first_name: name }) });
   const check = [...p.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([k, v]) => k + '=' + v).join('\n');
@@ -185,7 +187,29 @@ test('подарок: отмена лота и передача другу че�
   const s = await api(91, 'gsend', '/api/send', { kind: 'gift', id: 'c1', to: 'gfriend' });
   assert.ok(s.ok, JSON.stringify(s));
   assert.equal((await bal(91)).gf.length, 1);
+  assert.equal((await bal(92)).gf?.length || 0, 0); // пока друг не подтвердил, подарка у него нет
+  const ask = sent.filter((x) => x.m === 'sendMessage').at(-1).b;
+  assert.equal(String(ask.chat_id), '92');
+  const [yes, no] = ask.reply_markup.inline_keyboard[0].map((b) => b.callback_data);
+  assert.match(yes, /^t:y:/);
+  const cb = (id, data) => hook({ callback_query: { id: 'q', from: { id }, data, message: { chat: { id }, message_id: 5 } } });
+  await cb(93, yes); // чужой не может принять
+  assert.equal((await bal(92)).gf?.length || 0, 0);
+  await cb(92, yes);
+  await cb(92, yes); // повторное нажатие не дублирует
+  assert.equal((await bal(92)).gf.length, 1);
   assert.equal((await bal(92)).gf[0].g, 'candy-cane');
+  // отказ возвращает отправителю
+  const left = (await bal(91)).gf[0];
+  await env.DB.prepare("UPDATE players SET uname = 'gfriend' WHERE id = '92'").run();
+  const s2 = await api(91, 'gsend', '/api/send', { kind: 'gift', id: left.n, to: 'gfriend' });
+  assert.ok(s2.ok, JSON.stringify(s2));
+  assert.equal((await bal(91)).gf.length, 0);
+  const no2 = sent.filter((x) => x.m === 'sendMessage' && x.b.reply_markup && x.b.reply_markup.inline_keyboard).at(-1).b.reply_markup.inline_keyboard[0][1].callback_data;
+  await cb(92, no2);
+  assert.equal((await bal(92)).gf.length, 1);
+  assert.equal((await bal(91)).gf.length, 1);
+  assert.equal((await bal(91)).gf[0].g, left.g);
 });
 
 test('покупка подарков в магазине закрыта (раздел в разработке)', async () => {
@@ -209,7 +233,6 @@ test('рейтинг: только реальные игроки, место с�
   assert.equal((await api(101, 'topone', '/api/top', { cat: 'bal' })).rank, 1);
 });
 
-const hook = (u) => worker.fetch(new Request('https://x/', { method: 'POST', headers: { 'X-Telegram-Bot-Api-Secret-Token': 's' }, body: JSON.stringify(u) }), env);
 
 test('оплата Stars: счёт, проверка, зачисление один раз', async () => {
   await player(201, 'payer', 0, []);

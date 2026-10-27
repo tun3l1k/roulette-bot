@@ -5,7 +5,7 @@ var document=NOOP,window=NOOP,navigator=NOOP,location=NOOP,localStorage=NOOP,ses
 var S=null,TG=null,cur=null,busy=false,scr='home',MSGS=[];
 function hap(){}function draw(){}function paintHome(){}function go(){}function back(){}function ask(){}function save(){}function SRV(){return false}
 // Настройки игры: редкости, словари, диапазоны, курс, задания
-var APP_VER='2.1.0';
+var APP_VER='2.2.0';
 var NEWS_URL='https://t.me/UsernameRouletteNews',SUPPORT_URL='https://t.me/TUN3L';
 var PAY_LIVE=false; // true, когда подключена настоящая оплата Telegram Stars
 var TIERS=[
@@ -177,7 +177,7 @@ function takeForSend(kind,id){var rec=null;
  if(kind=='gift'){rec=(S.gf||[]).filter(function(x){return x.n==id})[0];if(!rec)return null;S.gf=S.gf.filter(function(x){return x!==rec});return rec}
  if(kind=='nick'){rec=S.coll.filter(function(x){return x.u==id})[0];if(!rec)return null;S.coll=S.coll.filter(function(x){return x!==rec})}
  return rec}
-function sendDone(kind,rec,to){var gi=kind=='gift'?gInfo(rec.g):null;toast(gi?'Подарок '+gi.name+' отправлен @'+to:'Ник @'+rec.u+' отправлен @'+to)}
+function sendDone(kind,rec,to){var gi=kind=='gift'?gInfo(rec.g):null;toast((gi?'Подарок '+gi.name:'Ник @'+rec.u)+' отправлен @'+to+'. Ждём, пока друг примет его в боте')}
 function inboxReceive(items){items.forEach(function(it){var p=it.p;
  if(it.k=='nick'){S.coll.unshift(p);noteBest(p);toast(p.note||('Подарок от @'+it.from+': ник @'+p.u));delete p.note}
   else if(it.k=='gift'){S.gf=S.gf||[];S.gf.unshift({g:p.g,n:p.n,ts:p.ts||Date.now()});var gi=gInfo(p.g);toast(p.note||('Подарок от @'+it.from+(gi?': '+gi.name:'')))}
@@ -587,6 +587,7 @@ return{
  poolWords:function(k){var a=poolRef(k);return a?a.slice():[]},
  stats:function(state){S=state;var col=0;(S.coll||[]).forEach(function(x){col+=worth(x)});return{lvl:level(),bal:Math.round(S.yuz+(S.ton||0)*RATE),col:col,spn:S.spins||0,rar:(S.rare||[]).length,bst:S.best?worth(S.best):0}},
  shopItem:function(id){return shopItem(id)},
+ giftName:function(id){var g=gInfo(id);return g?g.name:null},
  allowed:function(fn){return Object.prototype.hasOwnProperty.call(ACT,fn)},
  fresh:function(){S=defState();initState();return S},
  run:function(state,fn,args,ctx){ctx=ctx||{};S=state;MSGS=[];ADM=!!ctx.adm;cur=null;initState();
