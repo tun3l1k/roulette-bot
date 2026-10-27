@@ -5,7 +5,7 @@ var document=NOOP,window=NOOP,navigator=NOOP,location=NOOP,localStorage=NOOP,ses
 var S=null,TG=null,cur=null,busy=false,scr='home',MSGS=[];
 function hap(){}function draw(){}function paintHome(){}function go(){}function back(){}function ask(){}function save(){}function SRV(){return false}
 // Настройки игры: редкости, словари, диапазоны, курс, задания
-var APP_VER='2.3.1';
+var APP_VER='2.4.0';
 var NEWS_URL='https://t.me/UsernameRouletteNews',SUPPORT_URL='https://t.me/TUN3L';
 var PAY_LIVE=false; // true, когда подключена настоящая оплата Telegram Stars
 var TIERS=[
@@ -19,7 +19,7 @@ var TIERS=[
 ];
 var BOTS=[['crypto_king',4200],['neo_wolf',1800],['dubai_boss',900],['lena_star',350],['max_ivanov_99',60]];
 var RATE=50000;
-var RNG={common:[2,5],norm:[5,15],rare:[11,36],epic:[18,61],legend:[33,112],mythic:[68,230],divine:[260,884]};
+var RNG={common:[2,5],norm:[5,15],rare:[10,32],epic:[16,55],legend:[30,100],mythic:[61,207],divine:[234,796]};
 var TASKS=[{id:'spin10',title:'Сделай 10 прокруток',goal:10,rew:50,ic:'repeat'},{id:'keep3',title:'Оставь 3 ника в коллекции',goal:3,rew:40,ic:'plus'},{id:'sell5',title:'Продай 5 ников',goal:5,rew:40,ic:'tag'},{id:'rare1',title:'Выбей редкий ник',goal:1,rew:150,ic:'star'},{id:'bid1',title:'Сделай ставку на аукционе',goal:1,rew:30,ic:'hammer'},{id:'list1',title:'Выставь ник на маркет',goal:1,rew:30,ic:'list'},{id:'wheel',title:'Крутани колесо фортуны',goal:1,rew:60,ic:'wheel'}];
 var WTASKS=[{id:'w_spin',ev:'spin10',title:'Сделай 100 прокруток',goal:100,rew:600,ic:'repeat'},{id:'w_rare',ev:'rare1',title:'Выбей 5 редких ников',goal:5,rew:1000,ic:'star'},{id:'w_sell',ev:'sell5',title:'Продай 30 ников',goal:30,rew:700,ic:'tag'},{id:'w_bid',ev:'bid1',title:'Сделай 5 ставок',goal:5,rew:500,ic:'hammer'},{id:'w_wheel',ev:'wheel',title:'Крутани колесо 3 раза',goal:3,rew:500,ic:'wheel'}];
 var COST=100,COLL_MAX=50; // COLL_MAX: сколько ников помещается в коллекции
@@ -112,9 +112,12 @@ function cfgInfo(){var tot=0,i;TIERS.forEach(function(t){tot+=t.w});
 function tier(id){return TIERS.filter(function(t){return t.id==id})[0]}
 function ti(id){return TIERS.indexOf(tier(id))}
 function level(){return Math.floor(Math.sqrt(S.xp/25))+1}
-function lf(){return Math.max(S.luck>0?LUCK_F:1,S.pity||1)}
+function lf(){return S.luck>0?LUCK_F:1}
+// Гарант: каждая 100-я прокрутка даёт эпический или выше, каждая 300-я — легендарный или выше
+function guardMin(n){return n%300==0?4:n%100==0?3:0}
 function noteBest(r){if(!r)return;if(!S.best||worth(r)>worth(S.best))S.best={u:r.u,tier:r.tier,base:r.base,k:r.k,odds:r.odds,ts:r.ts||Date.now()}}
-function pickTier(){var w=TIERS.map(function(t,i){return t.w*(i>=2?lf():1)}),sum=w.reduce(function(a,b){return a+b},0),r=Math.random()*sum;for(var i=0;i<w.length;i++){r-=w[i];if(r<=0)return TIERS[i]}return TIERS[0]}
+// mn: минимальный индекс редкости (гарант); всё, что ниже, не выпадает
+function pickTier(mn){mn=mn||0;var w=TIERS.map(function(t,i){return i<mn?0:t.w*(i>=2?lf():1)}),sum=w.reduce(function(a,b){return a+b},0),r=Math.random()*sum;for(var i=0;i<w.length;i++){r-=w[i];if(r<=0)return TIERS[i]}return TIERS[0]}
 function oddsOf(t){var w=TIERS.map(function(x,i){return x.w*(i>=2?lf():1)}),sum=w.reduce(function(a,b){return a+b},0);return Math.round(sum/(t.w*(TIERS.indexOf(t)>=2?lf():1)))}
 function baseFor(id){var g=RNG[id];return Math.round(g[0]+Math.pow(Math.random(),1.4)*(g[1]-g[0]))}
 // Лесенка: подряд идущие символы по возрастанию или убыванию (abc, cba, 123, 987)
@@ -177,9 +180,9 @@ function resetAll(){if(!ADM)return{err:'forbidden'};var keep={};PREFK.forEach(fu
 function resetMe(){var keep={};PREFK.concat(['prem','lg','freeDay']).forEach(function(k){if(S[k]!==undefined)keep[k]=S[k]});S=defState();Object.keys(keep).forEach(function(k){S[k]=keep[k]});initState();cur=null;save();return{ok:1}}
 function spinRoll(){if(S.pending)return{err:'pending'};var fr=S.free>0;if(!fr&&S.yuz<COST)return{err:'poor'};
  if(fr)S.free--;else{S.yuz-=COST;led('Прокрутка')}
- var t=pickTier(),r={u:build(t.id),tier:t.id,base:baseFor(t.id),k:rollBonus(),odds:oddsOf(t),ts:Date.now()};
+ var gm=guardMin(S.spins+1);S.pity=0;var t=pickTier(gm),r={u:build(t.id),tier:t.id,base:baseFor(t.id),k:rollBonus(),odds:oddsOf(t),ts:Date.now()};
  S.pending=r;noteBest(r);S.spins++;S.xp+=XPT[t.id];if(S.luck>0)S.luck--;
- levelCheck();S.pity=0;if(S.spins%150==0)S.pity=50;else if(S.spins%50==0)S.pity=2;if(S.pity)toast('Гарант! Следующая прокрутка: удача ×'+S.pity);
+ levelCheck();if(gm)toast('🍀 Гарант сработал: '+tier(TIERS[gm].id).name+' или выше');
  S.hist.unshift(r);if(S.hist.length>50)S.hist.pop();if(ti(r.tier)>=2){S.rare.unshift(r);if(S.rare.length>100)S.rare.pop()}
  tq('spin10');if(ti(r.tier)>=2)tq('rare1');
  if(Math.random()<.002){var tf=r3(.01+Math.random()*.04);S.ton=r3((S.ton||0)+tf);led('Находка TON');toast('Находка! +'+tonF(tf)+' TON')}
