@@ -46,7 +46,7 @@ test('панель, статистика, выдача, карточка, сбр
   await msg(1, '/give @vasya star 1000');
   assert.match(last().b.text, /Выдано/);
   await msg(1, '/player 500');
-  assert.match(last().b.text, /⭐ 2 500/);
+  assert.match(last().b.text, /⭐ 5 500/);
   await msg(1, '/give 500 ton 0.5');
   await msg(1, '/player @vasya');
   assert.match(last().b.text, /💎 0\.50/);
@@ -58,7 +58,7 @@ test('панель, статистика, выдача, карточка, сбр
   assert.equal(kb.callback_data, 'r:500');
   await post({ callback_query: { id: 'c', from: { id: 1 }, data: kb.callback_data, message: { chat: { id: 1 }, message_id: 9 } } });
   await msg(1, '/player 500');
-  assert.match(last().b.text, /⭐ 1 500/);
+  assert.match(last().b.text, /⭐ 4 500/);
   assert.match(last().b.text, /Ников: 0/);
 
   await msg(2, '/maint on Чиним');
@@ -110,7 +110,7 @@ test('настройка игры из бота: /chance /price /cost /pool /cfg
   await post({ callback_query: { id: 'c', from: { id: 1 }, data: 'c:reset', message: { chat: { id: 1 }, message_id: 9 } } });
   assert.equal(JSON.parse((await env.DB.prepare("SELECT v FROM config WHERE k='game'").first()).v).cost, undefined);
   await msg(1, '/chance');
-  assert.match(sent.at(-2).b.text, /Прокрутка: <b>100 ⭐/);
+  assert.match(sent.at(-2).b.text, /Прокрутка: <b>300 ⭐/);
 });
 
 test('админ: списание, фри-прокрутки, выдача ника, поиск, бан, объявление, промокод', async () => {
@@ -121,7 +121,7 @@ test('админ: списание, фри-прокрутки, выдача ни
   await msg(1, '/take @petya star 500');
   assert.match(last().b.text, /Списано/);
   await msg(1, '/player 600');
-  assert.match(last().b.text, /⭐ 1/); // было 1 500 → 1 000
+  assert.match(last().b.text, /⭐ 4/); // было 4 500 → 4 000
   await msg(1, '/free 600 7');
   await msg(1, '/nick @petya legend zorroo 5');
   assert.match(last().b.text, /@zorroo.*бонус ×5/);
@@ -160,7 +160,7 @@ test('админ: списание, фри-прокрутки, выдача ни
   await msg(600, '/code TEST1');
   assert.match(last().b.text, /уже активировал|закончился/);
   await msg(1, '/player 600');
-  assert.match(last().b.text, /⭐ 2 000/); // 1 000 + 1 000
+  assert.match(last().b.text, /⭐ 5 000/); // 4 000 + 1 000
   await msg(1, '/promo add FREE1 spins 5 10');
   await msg(600, '/code FREE1');
   assert.match(last().b.text, /5 прокруток/);

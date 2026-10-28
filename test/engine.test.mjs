@@ -8,7 +8,7 @@ const run = (S, fn, args = [], ctx = {}) => E.run(S, fn, args, ctx);
 
 test('движок собирается и создаёт чистое состояние без подарков', () => {
   const S = E.fresh();
-  assert.equal(S.yuz, 1500);
+  assert.equal(S.yuz, 4500);
   assert.deepEqual(S.coll, []);
   assert.equal(S.gifts, undefined);
 });
@@ -155,7 +155,7 @@ test('сброс прогресса доступен только админу �
   assert.equal(S.yuz, 99999, 'без прав ничего не меняется');
   const r = run(S, 'resetAll', [], { adm: true });
   assert.equal(r.res.ok, 1);
-  assert.equal(r.S.yuz, 1500);
+  assert.equal(r.S.yuz, 4500);
   assert.deepEqual(r.S.coll, []);
   assert.equal(r.S.theme, 'dark');
   assert.equal(r.S.haptic, false);
@@ -164,9 +164,9 @@ test('сброс прогресса доступен только админу �
 test('выдача звёзд и TON работает только для админа', () => {
   const S = E.fresh();
   run(S, 'admGrant', ['star:1000'], { adm: false });
-  assert.equal(S.yuz, 1500);
+  assert.equal(S.yuz, 4500);
   run(S, 'admGrant', ['star:1000'], { adm: true });
-  assert.equal(S.yuz, 2500);
+  assert.equal(S.yuz, 5500);
   run(S, 'admGrant', ['ton:0.5'], { adm: true });
   assert.equal(S.ton, 0.5);
 });
@@ -213,7 +213,7 @@ test('крафт: некорректные запросы отклоняются
 
 test('настройки: шансы, цена прокрутки, словари применяются и сбрасываются', () => {
   const base = E.cfgInfo();
-  assert.equal(base.cost, 100);
+  assert.equal(base.cost, 300);
   E.setConfig({ w: { divine: 50 }, rng: { rare: [100, 200] }, cost: 250, craft: { rare: 0.9 }, add: { words: ['zzqux'] }, del: { words: ['fox'] } });
   const i = E.cfgInfo();
   assert.equal(i.cost, 250);
@@ -227,7 +227,7 @@ test('настройки: шансы, цена прокрутки, словар�
   // мусор отбрасывается
   E.setConfig({ w: { rare: -5, epic: 'x' }, cost: 0, add: { words: ['Bad Word', '', 'ok_1'] } });
   assert.ok(E.poolWords('words').includes('ok_1') && !E.poolWords('words').includes('Bad Word'));
-  assert.equal(E.cfgInfo().cost, 100);
+  assert.equal(E.cfgInfo().cost, 300);
   E.setConfig({});
   const back = E.cfgInfo();
   assert.deepEqual(back.tiers.map((t) => t.w), base.tiers.map((t) => t.w));
@@ -266,19 +266,19 @@ test('рефералы: награды в звёздах, прокрутках �
   const S = E.fresh(); const y0 = S.yuz, f0 = S.free || 0;
   const r = run(S, 'refsApply', [{ total: 10, act: 10, list: [], inviter: null }], { internal: true });
   assert.equal(S.refPaid, 10);
-  assert.equal(S.yuz - y0, 1500 + 5000);
+  assert.equal(S.yuz - y0, 4500 + 15000);
   assert.equal(S.free - f0, 5 + 10);
   assert.equal(S.coll.filter((x) => x.tier === 'epic').length, 1);
   assert.equal(S.coll.filter((x) => x.tier === 'legend').length, 1);
   assert.ok(!S.ton, 'TON за друзей больше не выдаётся');
   const again = run(S, 'refsApply', [{ total: 10, act: 10, list: [], inviter: null }], { internal: true });
-  assert.equal(S.yuz - y0, 6500, 'повторно не платит');
+  assert.equal(S.yuz - y0, 19500, 'повторно не платит');
 });
 
 test('экономика: возврат при продаже всего ≈ 75–90% от цены прокрутки', () => {
   const S = E.fresh(); S.yuz = 1e12; const y0 = S.yuz; let n = 120000;
   for (let i = 0; i < n; i++) { run(S, 'spinRoll'); run(S, 'sellPending'); }
-  const rtp = (S.yuz - y0 + n * 100) / (n * 100);
+  const rtp = (S.yuz - y0 + n * 300) / (n * 300);
   assert.ok(rtp > 0.68 && rtp < 0.97, 'RTP ' + rtp.toFixed(3));
 });
 
