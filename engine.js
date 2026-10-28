@@ -5,7 +5,7 @@ var document=NOOP,window=NOOP,navigator=NOOP,location=NOOP,localStorage=NOOP,ses
 var S=null,TG=null,cur=null,busy=false,scr='home',MSGS=[];
 function hap(){}function draw(){}function paintHome(){}function go(){}function back(){}function ask(){}function save(){}function SRV(){return false}
 // Настройки игры: редкости, словари, диапазоны, курс, задания
-var APP_VER='2.4.1';
+var APP_VER='2.4.2';
 var NEWS_URL='https://t.me/UsernameRouletteNews',SUPPORT_URL='https://t.me/TUN3L';
 var PAY_LIVE=false; // true, когда подключена настоящая оплата Telegram Stars
 var TIERS=[
@@ -18,21 +18,21 @@ var TIERS=[
  {id:'divine',name:'божественный',icon:'🌟',color:'#ffd700',bd:['#ffd75a','#b8560a'],w:0.2,pts:520}
 ];
 var BOTS=[['crypto_king',4200],['neo_wolf',1800],['dubai_boss',900],['lena_star',350],['max_ivanov_99',60]];
-var RATE=50000;
-var RNG={common:[2,5],norm:[5,15],rare:[10,32],epic:[16,55],legend:[30,100],mythic:[61,207],divine:[234,796]};
-var TASKS=[{id:'spin10',title:'Сделай 10 прокруток',goal:10,rew:50,ic:'repeat'},{id:'keep3',title:'Оставь 3 ника в коллекции',goal:3,rew:40,ic:'plus'},{id:'sell5',title:'Продай 5 ников',goal:5,rew:40,ic:'tag'},{id:'rare1',title:'Выбей редкий ник',goal:1,rew:150,ic:'star'},{id:'bid1',title:'Сделай ставку на аукционе',goal:1,rew:30,ic:'hammer'},{id:'list1',title:'Выставь ник на маркет',goal:1,rew:30,ic:'list'},{id:'wheel',title:'Крутани колесо фортуны',goal:1,rew:60,ic:'wheel'}];
-var WTASKS=[{id:'w_spin',ev:'spin10',title:'Сделай 100 прокруток',goal:100,rew:600,ic:'repeat'},{id:'w_rare',ev:'rare1',title:'Выбей 5 редких ников',goal:5,rew:1000,ic:'star'},{id:'w_sell',ev:'sell5',title:'Продай 30 ников',goal:30,rew:700,ic:'tag'},{id:'w_bid',ev:'bid1',title:'Сделай 5 ставок',goal:5,rew:500,ic:'hammer'},{id:'w_wheel',ev:'wheel',title:'Крутани колесо 3 раза',goal:3,rew:500,ic:'wheel'}];
-var COST=100,COLL_MAX=50; // COLL_MAX: сколько ников помещается в коллекции
-var LUCK_F=1.5,LUCK_COST=300; // удача: множитель шанса редких и цена за 10 прокруток (подобрано так, чтобы не окупаться)
+var RATE=150000;
+var RNG={common:[80,100],norm:[80,100],rare:[80,100],epic:[80,100],legend:[80,100],mythic:[80,100],divine:[80,100]};
+var TASKS=[{id:'spin10',title:'Сделай 10 прокруток',goal:10,rew:150,ic:'repeat'},{id:'keep3',title:'Оставь 3 ника в коллекции',goal:3,rew:120,ic:'plus'},{id:'sell5',title:'Продай 5 ников',goal:5,rew:120,ic:'tag'},{id:'rare1',title:'Выбей редкий ник',goal:1,rew:450,ic:'star'},{id:'bid1',title:'Сделай ставку на аукционе',goal:1,rew:90,ic:'hammer'},{id:'list1',title:'Выставь ник на маркет',goal:1,rew:90,ic:'list'},{id:'wheel',title:'Крутани колесо фортуны',goal:1,rew:180,ic:'wheel'}];
+var WTASKS=[{id:'w_spin',ev:'spin10',title:'Сделай 100 прокруток',goal:100,rew:1800,ic:'repeat'},{id:'w_rare',ev:'rare1',title:'Выбей 5 редких ников',goal:5,rew:3000,ic:'star'},{id:'w_sell',ev:'sell5',title:'Продай 30 ников',goal:30,rew:2100,ic:'tag'},{id:'w_bid',ev:'bid1',title:'Сделай 5 ставок',goal:5,rew:1500,ic:'hammer'},{id:'w_wheel',ev:'wheel',title:'Крутани колесо 3 раза',goal:3,rew:1500,ic:'wheel'}];
+var COST=300,COLL_MAX=50; // COLL_MAX: сколько ников помещается в коллекции
+var LUCK_F=1.5,LUCK_COST=900; // удача: множитель шанса редких и цена за 10 прокруток (подобрано так, чтобы не окупаться)
 var WHEEL_MS=5*3600*1000;
 var WHEEL=[
- {id:'s50',c:'#5ac8fa',w:28,t:'star',v:50},
- {id:'s150',c:'#34c759',w:27,t:'star',v:150},
+ {id:'s50',c:'#5ac8fa',w:28,t:'star',v:150},
+ {id:'s150',c:'#34c759',w:27,t:'star',v:450},
  {id:'luck',c:'#a259f7',w:12,t:'luck',v:10},
  {id:'free',c:'#ff5d8f',w:12,t:'free',v:1},
- {id:'s1000',c:'#ffb020',w:7,t:'star',v:1000},
+ {id:'s1000',c:'#ffb020',w:7,t:'star',v:3000},
  {id:'ton',c:'#0098ea',w:2.5,t:'ton',v:0.005},
- {id:'s5000',c:'#ff6a5f',w:2.5,t:'star',v:5000}];
+ {id:'s5000',c:'#ff6a5f',w:2.5,t:'star',v:15000}];
 var XPT={common:1,norm:2,rare:5,epic:15,legend:40,mythic:100,divine:300};
 
 // Мелкие помощники: случайность, форматирование, тосты, тема
@@ -148,7 +148,7 @@ function mult(u){var m=1,tg=[],pr=[],n=u.length,dg=(u.match(/\d/g)||[]).length;
  if(u.indexOf('_')>=0)add(.9,'подчёркивание');
  return{m:m,tags:tg,parts:pr}}
 // Бонус прокрутки: после того как выпал ник, выпадает множитель, на который умножается его цена
-var BONUS=[{k:1,w:46},{k:1.5,w:22},{k:2,w:15},{k:3,w:9},{k:5,w:4.5},{k:10,w:2.2},{k:25,w:1},{k:100,w:.3}];
+var BONUS=[{k:1,w:46},{k:1.5,w:22},{k:2,w:15},{k:3,w:9},{k:5,w:4.5},{k:10,w:1.8},{k:25,w:.7},{k:100,w:.2}];
 function rollBonus(){var s=0,r,i;BONUS.forEach(function(b){s+=b.w});r=Math.random()*s;for(i=0;i<BONUS.length;i++){r-=BONUS[i].w;if(r<=0)return BONUS[i].k}return 1}
 function bonusOf(r){return r&&r.k>1?r.k:1}
 function bonusColor(k){return k>=100?'#ffd700':k>=25?'#ff3b30':k>=10?'#ff9500':k>=5?'#a855f7':k>=2?'#3b82f6':k>1?'#34c759':'#8e8e93'}
@@ -167,7 +167,7 @@ function mx(u){var m=mult(u).m;return m>1?' · ×'+fm(m):''}
 
 // Действия экономики. Этот код выполняется на сервере (источник правды) и локально, если сервера нет
 var PREFK=['theme','bsize','haptic','anim','confirm','auto','arules','autoMax','autoKeep','autoTags','autoTagAct','autoCap','autoCapAct','autoNotify','asMin','asLimit','mf','mq','cf','cs','cq','hf','rc','tt','pm','mt'];
-function defState(){return {coll:[],hist:[],spins:0,yuz:1500,g1:1,g2:1,g3:1,xp:0,luck:0,theme:'auto'}}
+function defState(){return {coll:[],hist:[],spins:0,yuz:4500,g1:1,g2:1,g3:1,xp:0,luck:0,theme:'auto'}}
 // Подарки убраны из игры: то, что осталось у игроков, один раз переводим в звёзды по цене продажи (70% оценки)
 var LGB={candy:50,vice:75,snoop:200,mood:500,cigar:1000},LGR=[0,.3,.8,2,6];
 function legacyGiftValue(g){var b=LGB[g.type]||50;if(g.up&&g.md&&g.bd&&g.sy){var s=g.ser<=10?2:g.ser<=100?.5:g.ser<=1000?.2:0;b=b*(1+LGR[g.md[1]]+LGR[g.bd[3]]+LGR[g.sy[1]]+s)}return Math.round(b*.7)}
@@ -257,7 +257,7 @@ function tq(id,n){tqE();var t=TASKS.filter(function(x){return x.id==id})[0];
  WTASKS.forEach(function(w){if(w.ev==id){var b=S.tw.p[w.id]||0;S.tw.p[w.id]=Math.min(w.goal,b+(n||1));if(b<w.goal&&S.tw.p[w.id]>=w.goal)tdone(w)}});save()}
 function allClaimed(){return TASKS.every(function(t){return S.tq.c[t.id]})}
 function claimable(){tqE();var n=0;TASKS.forEach(function(t){if((S.tq.p[t.id]||0)>=t.goal&&!S.tq.c[t.id])n++});WTASKS.forEach(function(t){if((S.tw.p[t.id]||0)>=t.goal&&!S.tw.c[t.id])n++});if(allClaimed()&&!S.tq.c.chest)n++;return n}
-function chestInfo(){var y=new Date();y.setDate(y.getDate()-1);var n=(S.lastChest==dk(y))?(S.streak||0)+1:1;return{n:n,rew:200+50*(Math.min(n,7)-1)}}
+function chestInfo(){var y=new Date();y.setDate(y.getDate()-1);var n=(S.lastChest==dk(y))?(S.streak||0)+1:1;return{n:n,rew:600+150*(Math.min(n,7)-1)}}
 function streakNow(){var y=new Date();y.setDate(y.getDate()-1);return(S.lastChest==dk(new Date())||S.lastChest==dk(y))?(S.streak||0):0}
 function dayLeft(){var n=new Date(),m=new Date(n);m.setHours(24,0,0,0);var t=Math.floor((m-n)/60000);return Math.floor(t/60)+' ч '+(t%60)+' мин'}
 function weekLeft(){var n=new Date(),dow=(n.getDay()+6)%7,m=new Date(n.getFullYear(),n.getMonth(),n.getDate()+7-dow),mn=Math.max(0,Math.floor((m-n)/60000)),d=Math.floor(mn/1440),h=Math.floor(mn%1440/60);return d+' д '+h+' ч'}
@@ -339,7 +339,7 @@ function spinWheel(){if(WBUSY||!wheelReady())return;WBUSY=true;
   setTimeout(function(){clearInterval(tk);WBUSY=false;hap({type:'notification',notification_type:'success'});toast('Выигрыш: '+r.prize);(o.msgs||[]).forEach(function(m){toast(m)});if(scr=='wheel')draw()},4700)})}
 
 // Магазин и Premium (покупки пока тестовые: настоящая оплата Telegram Stars подключается с сервером)
-var PACKS=[{id:'p1',stars:1000,price:50,tag:''},{id:'p2',stars:5500,price:250,tag:'+10%'},{id:'p3',stars:12000,price:500,tag:'+20%'}];
+var PACKS=[{id:'p1',stars:3000,price:50,tag:''},{id:'p2',stars:16500,price:250,tag:'+10%'},{id:'p3',stars:36000,price:500,tag:'+20%'}];
 var PREM_PRICE=150,PREM_DAYS=30,WR_PRICE=25;
 function isPrem(){return (S.prem||0)>Date.now()}
 function premDays(){return Math.max(0,Math.ceil(((S.prem||0)-Date.now())/864e5))}
@@ -410,8 +410,8 @@ function adminHtml(){if(!ADM)return '<div class="empty">Нет доступа</d
 
 // Рефералы: приглашай друзей по ссылке и получай награды (подсчёт ведёт сервер)
 var TITLES={amb:'Амбассадор',leg:'Легенда Юзерка'};
-var REFM=[{n:1,star:1500,free:5,t:'1 500 ⭐ и 5 бесплатных прокруток'},{n:3,nick:'epic',t:'эпический ник'},{n:5,star:5000,free:10,t:'5 000 ⭐ и 10 прокруток'},{n:10,nick:'legend',t:'легендарный ник'},{n:25,title:'amb',nick:'mythic',star:15000,t:'титул «Амбассадор», мифический ник и 15 000 ⭐'},{n:50,star:40000,free:50,t:'40 000 ⭐ и 50 прокруток'},{n:100,title:'leg',nick:'divine',star:100000,t:'титул «Легенда Юзерка», божественный ник и 100 000 ⭐'}];
-var REF_WELCOME=500,REF_FREE=3,REF_NEED=3,RF=null,RBOT='';
+var REFM=[{n:1,star:4500,free:5,t:'4 500 ⭐ и 5 бесплатных прокруток'},{n:3,nick:'epic',t:'эпический ник'},{n:5,star:15000,free:10,t:'15 000 ⭐ и 10 прокруток'},{n:10,nick:'legend',t:'легендарный ник'},{n:25,title:'amb',nick:'mythic',star:45000,t:'титул «Амбассадор», мифический ник и 45 000 ⭐'},{n:50,star:120000,free:50,t:'120 000 ⭐ и 50 прокруток'},{n:100,title:'leg',nick:'divine',star:300000,t:'титул «Легенда Юзерка», божественный ник и 300 000 ⭐'}];
+var REF_WELCOME=1500,REF_FREE=3,REF_NEED=3,RF=null,RBOT='';
 function titleChip(){var T=S.titles||[];if(!T.length)return '';var k=T.indexOf('leg')>=0?'leg':T[T.length-1];return ' <span class="ttl '+k+'">'+TITLES[k]+'</span>'}
 function refLink(){return RBOT&&TG&&TG.id?'https://t.me/'+RBOT+'?start=ref_'+TG.id:''}
 function refsInfo(){if(RBOT||!cloudOn())return;cpost('/api/info',{}).then(function(r){if(r&&r.ok&&r.bot){RBOT=r.bot;if(scr=='friends')draw()}}).catch(function(){})}
@@ -537,7 +537,7 @@ function sellGift(n){var it=(S.gf||[]).filter(function(x){return x.n==n})[0];if(
  var v=r3(g.ton*GF_SELL);S.gf=S.gf.filter(function(x){return x!==it});S.ton=r3((S.ton||0)+v);led('Продан подарок '+g.name);save();toast('Продано: '+g.name+' · +'+tonF(v)+' TON');return{ok:1,v:v}}
 
 // Ежедневный вход (серия 7 дней) и награда за новый уровень
-var LOGIN_R=[{s:200},{s:300,f:1},{s:500},{s:700,f:2},{s:1000},{s:1500,f:3},{s:3000,f:5,l:20}];
+var LOGIN_R=[{s:600},{s:900,f:1},{s:1500},{s:2100,f:2},{s:3000},{s:4500,f:3},{s:9000,f:5,l:20}];
 function dayNum(tz){var o=Math.max(-840,Math.min(840,Math.round(+tz)||0));return Math.floor((Date.now()-o*60000)/86400000)}
 function loginInfo(tz){var lg=S.lg||{d:-9,n:0,at:0},t=dayNum(tz);
  return{done:lg.d==t,n:lg.d==t?lg.n:(lg.d==t-1?lg.n:0),next:(lg.d==t?lg.n:(lg.d==t-1?lg.n:0))+(lg.d==t?0:1),lost:lg.d<t-1&&lg.n>0}}
@@ -562,7 +562,7 @@ function dailyPop(){if(document.querySelector('.ov.dly'))return;var o=document.c
  document.body.appendChild(o)}
 function dailyAuto(){if(DLYS)return;DLYS=true;if(loginInfo(new Date().getTimezoneOffset()).done)return;setTimeout(dailyPop,500)}
 function levelCheck(){var L=level();if(S.lvR===undefined){S.lvR=L;return}
- while(S.lvR<L&&S.lvR<500){S.lvR++;var st=50*S.lvR+50,fr=S.lvR%5==0?5:0;S.yuz+=st;if(fr)S.free=(S.free||0)+fr;led('Уровень '+S.lvR);toast('Уровень '+S.lvR+'! +'+money(st)+(fr?' и '+fr+' прокруток':''))}}
+ while(S.lvR<L&&S.lvR<500){S.lvR++;var st=150*S.lvR+150,fr=S.lvR%5==0?5:0;S.yuz+=st;if(fr)S.free=(S.free||0)+fr;led('Уровень '+S.lvR);toast('Уровень '+S.lvR+'! +'+money(st)+(fr?' и '+fr+' прокруток':''))}}
 // Сделки между игроками: деньги уходят в залог на сервере (p2pPay), возвращаются через p2pRefund или входящие «cash»
 function p2pPay(a,slot,cc){a=Math.round(+a);if(!(a>0)||a>1e10)return{err:'arg'};if(slot=='gift'?gfFull():(slot&&collFull()))return{err:'full'};
  if(cc=='ton'){if((S.ton||0)<a/1000-1e-9)return{err:'poor'};S.ton=r3((S.ton||0)-a/1000)}else{if(S.yuz<a)return{err:'poor'};S.yuz-=a}led('Сделка с игроком');save();return{ok:1}}

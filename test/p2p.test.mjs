@@ -127,10 +127,10 @@ test('ежедневный вход и уровень: награды начис
   const tz = 0;
   const a = await api(61, 'daily', '/api/act', { fn: 'claimLogin', args: [tz] });
   assert.ok(a.ok);
-  assert.equal((await bal(61)).yuz, 200);
+  assert.equal((await bal(61)).yuz, 600);
   const b = await api(61, 'daily', '/api/act', { fn: 'claimLogin', args: [tz] });
   assert.equal(b.res.err, 'done');
-  assert.equal((await bal(61)).yuz, 200);
+  assert.equal((await bal(61)).yuz, 600);
 });
 
 async function giftPlayer(id, name, ton, gf, yuz = 0) {
@@ -256,7 +256,7 @@ test('оплата Stars: счёт, проверка, зачисление од�
   await hook(pay);
   await hook(pay); // повтор от Telegram не должен выдать второй раз
   const st = await bal(201);
-  assert.equal(st.yuz - before, 1000);
+  assert.equal(st.yuz - before, 3000);
   assert.equal(st.spent, 50);
   assert.equal((await env.DB.prepare('SELECT COUNT(*) AS n FROM payments').first()).n, 1);
 
